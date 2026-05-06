@@ -6,11 +6,6 @@ ROOT = Path(__file__).resolve().parents[3]
 class Settings(BaseSettings):
     app_name: str = "Baboon Technologies API"
     environment: str = "development"
-
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
-    fred_api_key: str
-    openai_api_key: str
-
     edgar_user_agent: str
     fred_api_key: str
     openai_api_key: str
