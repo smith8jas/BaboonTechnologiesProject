@@ -4,12 +4,12 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from langchain.chat_models import init_chat_model
 
-from Generate_Tasks import generate_tasks
+load_dotenv(find_dotenv())
 
-from dotenv import load_dotenv, find_dotenv
+#from Generate_Tasks import generate_tasks
 
 env_path = find_dotenv()
 
