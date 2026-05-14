@@ -1,36 +1,8 @@
 XBRL_MAPPINGS = {
-    # ── Income Statement ──────────────────────────────────────
-    "revenue":                          "Revenue",
-    "cogs":                             "CostOfGoodsAndServicesSold",
-    "gross_profit":                     "GrossProfit",
-    "rd_expense":                       "ResearchAndDevelopmentExpenses",
-    "sga_expense":                      "SellingGeneralAndAdminExpenses",
-    "marketing_expense":                "MarketingExpenses",
-    "depreciation_expense":             "DepreciationExpense",
-    "amortization_intangibles":         "AmortizationOfIntangibles",
-    "restructuring_expense":            "RestructuringExpenseBenefit",
-    "goodwill_impairment":              "GoodwillWriteoffs",
-    "other_operating_expense":          "OtherOperatingExpense",
-    "total_opex":                       "TotalOperatingExpenses",
-    "operating_income":                 "OperatingIncomeLoss",
-    "interest_expense":                 "InterestExpense",
-    "interest_income":                  "InterestIncome",
-    "interest_and_dividend_income":     "InterestAndDividendIncome",
-    "nonoperating_income":              "NonoperatingIncomeExpense",
-    "pretax_income":                    "PretaxIncomeLoss",
-    "tax_expense":                      "IncomeTaxes",
-    "net_income":                       "NetIncome",
-    "net_income_to_common":             "NetIncomeToCommonShareholders",
-    "minority_interest_income":         "MinorityInterestIncomeExpense",
-    "profit_loss":                      "ProfitLoss",
-    "eps_basic":                        "EarningsPerShareBasic",
-    "eps_diluted":                      "EarningsPerShareDiluted",
-    "basic_shares":                     "SharesAverage",
-    "diluted_shares":                   "SharesFullyDilutedAverage",
-    "shares_issued":                    "SharesIssued",
-    "shares_year_end":                  "SharesYearEnd",
 
-    # Industry-specific revenue
+    # ── Income Statement — Revenue ────────────────────────────
+    "revenue":                          "Revenue",
+    "product_revenue":                  "ProductRevenue",
     "advertising_revenue":              "AdvertisingRevenueIS",
     "subscription_revenue":             "SubscriptionRevenue",
     "licensing_revenue":                "LicensingRevenue",
@@ -45,35 +17,97 @@ XBRL_MAPPINGS = {
     "government_contracts_revenue":     "GovernmentContractsRevenue",
     "commissions_revenue":              "CommissionsRevenue",
     "management_fee_revenue":           "ManagementFeeRevenue",
-    "product_revenue":                  "ProductRevenue",
+    "tenant_reimbursements_revenue":    "TenantReimbursementsRevenue",
 
-    # Industry-specific expenses
+    # ── Income Statement — Cost of Revenue ───────────────────
+    "cogs":                             "CostOfGoodsAndServicesSold",
+    "gross_profit":                     "GrossProfit",
+
+    # ── Income Statement — Operating Expenses ────────────────
+    "rd_expense":                       "ResearchAndDevelopmentExpenses",
+    "sga_expense":                      "SellingGeneralAndAdminExpenses",
+    "marketing_expense":                "MarketingExpenses",
+    "depreciation_expense":             "DepreciationExpense",
+    "amortization_intangibles":         "AmortizationOfIntangibles",
+    "restructuring_expense":            "RestructuringExpenseBenefit",
+    "goodwill_impairment":              "GoodwillWriteoffs",
+    "other_operating_expense":          "OtherOperatingExpense",
+    "total_opex":                       "TotalOperatingExpenses",
+    "costs_subtotal":                   "CostsSubtotal",
+    "bad_debt_expense":                 "BadDebtExpense",
     "labor_expenses":                   "LaborExpenses",
     "occupancy_expense":                "OccupancyExpense",
     "communication_tech_expense":       "CommunicationAndTechnologyExpense",
     "professional_fees":                "ProfessionalFees",
     "advertising_expense":              "AdvertisingExpense",
     "finance_lease_expense":            "FinanceLeaseExpense",
+    "operating_lease_expense":          "OperatingLeaseExpense",
     "pension_expense":                  "PensionExpense",
     "asset_impairment":                 "AssetImpairmentChargesIS",
+    "sbc_expense":                      "StockBasedCompensationExpense",
 
-    # Banking/insurance specific income statement
-    "net_interest_income":              "NetInterestIncome",
-    "net_interest_income_after_prov":   "NetInterestIncomeAfterProvision",
-    "non_interest_income":              "NonInterestIncome",
-    "non_interest_expense":             "NonInterestExpense",
-    "provision_credit_losses":          "ProvisionForCreditLosses",
-    "policy_benefits_claims":           "PolicyBenefitsAndClaims",
+    # ── Income Statement — Operating Income ──────────────────
+    "operating_income":                 "OperatingIncomeLoss",
 
-    # Other income statement
+    # ── Income Statement — Non-Operating Items ───────────────
+    "interest_expense":                 "InterestExpense",
+    "interest_income":                  "InterestIncome",
+    "interest_and_dividend_income":     "InterestAndDividendIncome",
+    "nonoperating_income":              "NonoperatingIncomeExpense",
     "gain_loss_dispositions":           "GainLossOnDispositions",
     "gain_loss_investments":            "GainLossOnInvestmentsIS",
     "foreign_currency_gain_loss":       "ForeignCurrencyGainLoss",
     "equity_method_income":             "EquityMethodInvestmentIncome",
     "loss_debt_extinguishment":         "LossOnDebtExtinguishment",
-    "discontinued_operations":          "DiscontinuedOperationsIncome",
+    "other_income":                     "OtherIncomeIS",
+    "other_expense":                    "OtherExpenseIS",
 
-    # ── Balance Sheet — Current Assets ────────────────────────
+    # ── Income Statement — Income Before Tax ─────────────────
+    "pretax_income":                    "PretaxIncomeLoss",
+
+    # ── Income Statement — Income Tax ────────────────────────
+    "tax_expense":                      "IncomeTaxes",
+    "current_tax_expense":              "CurrentIncomeTaxExpense",
+    "deferred_tax_expense":             "DeferredIncomeTaxExpense",
+    "valuation_allowance_dta":          "ValuationAllowanceDTA",
+
+    # ── Income Statement — Net Income ────────────────────────
+    "net_income":                       "NetIncome",
+    "net_income_to_common":             "NetIncomeToCommonShareholders",
+    "minority_interest_income":         "MinorityInterestIncomeExpense",
+    "profit_loss":                      "ProfitLoss",
+    "income_continuing_operations":     "IncomeLossContinuingOperations",
+    "discontinued_operations":          "DiscontinuedOperationsIncome",
+    "extraordinary_items":              "ExtraordinaryItemsIncomeExpense(PostTax)",
+    "special_items":                    "SpecialItemsIncomeExpense(Pretax)",
+    "preferred_dividend_expense":       "PreferredDividendExpense",
+
+    # ── Income Statement — Banking Revenue ───────────────────
+    "net_interest_income":              "NetInterestIncome",
+    "net_interest_income_after_prov":   "NetInterestIncomeAfterProvision",
+    "non_interest_income":              "NonInterestIncome",
+    "total_interest_income_operating":  "TotalInterestIncomeOperating",
+
+    # ── Income Statement — Banking Expenses ──────────────────
+    "non_interest_expense":             "NonInterestExpense",
+    "provision_credit_losses":          "ProvisionForCreditLosses",
+    "interest_expense_deposits":        "InterestExpenseDeposits",
+
+    # ── Income Statement — Insurance ─────────────────────────
+    "policy_benefits_claims":           "PolicyBenefitsAndClaims",
+
+    # ── Per Share Data ────────────────────────────────────────
+    "eps_basic":                        "EarningsPerShareBasic",
+    "eps_diluted":                      "EarningsPerShareDiluted",
+    "basic_shares":                     "SharesAverage",
+    "diluted_shares":                   "SharesFullyDilutedAverage",
+    "shares_issued":                    "SharesIssued",
+    "shares_year_end":                  "SharesYearEnd",
+    "shares_dilution_adjustment":       "SharesDilutionAdjustment",
+    "book_value_per_share":             "BookValuePerShare",
+    "common_dividends_per_share":       "CommonDividendsPerShare",
+
+    # ── Balance Sheet — Current Assets ───────────────────────
     "cash":                             "CashAndMarketableSecurities",
     "cash_and_equivalents":             "CashAndCashEquivalents",
     "restricted_cash_current":          "RestrictedCashCurrent",
@@ -89,9 +123,12 @@ XBRL_MAPPINGS = {
     "customer_advances":                "CustomerAdvances",
     "assets_held_for_sale":             "AssetsHeldForSale",
     "other_current_assets":             "OtherOperatingCurrentAssets",
+    "other_noncurrent_assets_current":  "OtherNonOperatingCurrentAssets",
+    "other_noncurrent_assets_nc":       "OtherNonOperatingNonCurrentAssets",
+    "retirement_related_current_assets":"RetirementRelatedCurrentAssets",
     "total_current_assets":             "CurrentAssetsTotal",
 
-    # ── Balance Sheet — Non-Current Assets ────────────────────
+    # ── Balance Sheet — Non-Current Assets ───────────────────
     "ppe_gross":                        "GrossPropertyPlantEquipment",
     "ppe_net":                          "PlantPropertyEquipmentNet",
     "accumulated_depreciation":         "AccumulatedDepreciation",
@@ -112,14 +149,17 @@ XBRL_MAPPINGS = {
     "regulated_assets":                 "RegulatedAssets",
     "net_loans_and_leases":             "NetLoansAndLeases",
     "notes_receivable_noncurrent":      "NotesReceivableNonCurrent",
+    "loan_loss_reserve":                "LoanLossReserve",
+    "retirement_related_noncurrent_assets": "RetirementRelatedNonCurrentAssets",
     "other_noncurrent_assets":          "OtherOperatingNonCurrentAssets",
     "total_noncurrent_assets":          "NonCurrentAssetsTotal",
     "total_assets":                     "Assets",
 
-    # ── Balance Sheet — Current Liabilities ───────────────────
+    # ── Balance Sheet — Current Liabilities ──────────────────
     "accounts_payable":                 "TradePayables",
     "short_term_debt":                  "ShortTermDebt",
     "current_portion_ltd":              "CurrentPortionOfLongTermDebt",
+    "operating_lease_current":          "OperatingLeaseCurrentDebtEquivalent",
     "deferred_revenue_current":         "DeferredRevenueCurrent",
     "contract_liabilities":             "ContractLiabilities",
     "taxes_payable":                    "TaxesPayable",
@@ -127,10 +167,15 @@ XBRL_MAPPINGS = {
     "accrued_income_taxes":             "AccruedIncomeTaxes",
     "dividends_payable":                "DividendsPayable",
     "self_insurance_reserve":           "SelfInsuranceReserve",
+    "deferred_tax_current_liab":        "DeferredTaxCurrentLiabilities",
+    "ongoing_operating_provisions":     "OngoingOperatingProvisions(WarrantiesEtc)",
+    "retirement_related_current_liab":  "RetirementRelatedCurrentLiabilities",
+    "retirement_related_noncurrent_liab":"RetirementRelatedNonCurrentLiabilities",
+    "other_noncurrent_current_liab":    "OtherNonOperatingCurrentLiabilities",
     "other_current_liabilities":        "OtherOperatingCurrentLiabilities",
     "total_current_liabilities":        "CurrentLiabilitiesTotal",
 
-    # ── Balance Sheet — Non-Current Liabilities ───────────────
+    # ── Balance Sheet — Non-Current Liabilities ──────────────
     "long_term_debt":                   "LongTermDebt",
     "convertible_debt":                 "ConvertibleDebtNonCurrent",
     "deferred_revenue_noncurrent":      "DeferredRevenueNonCurrent",
@@ -141,20 +186,43 @@ XBRL_MAPPINGS = {
     "deferred_compensation_noncurrent": "DeferredCompensationNonCurrent",
     "regulated_liabilities":            "RegulatedLiabilities",
     "total_deposits":                   "TotalDeposits",
+    "asset_retirement_obligations":     "AssetRetirementObligations",
+    "restructuring_provisions":         "RestructuringProvisions",
+    "definite_lived_provisions":        "DefiniteLivedOperatingProvisions(DecommissioningEtc)",
+    "other_noncurrent_liab_nonop":      "OtherNonOperatingNonCurrentLiabilities",
     "other_noncurrent_liabilities":     "OtherOperatingNonCurrentLiabilities",
     "total_noncurrent_liabilities":     "NonCurrentLiabilitiesTotal",
     "total_liabilities":                "Liabilities",
 
     # ── Balance Sheet — Equity ────────────────────────────────
     "total_equity":                     "CommonEquity",
+    "all_equity_balance":               "AllEquityBalance",
     "total_equity_incl_minority":       "AllEquityBalanceIncludingMinorityInterest",
-    "minority_interest_bs":             "MinorityInterestBalance",
+    "minority_interest_bs":             "MinorityInterestBS",
+    "minority_interest_balance":        "MinorityInterestBalance",
     "preferred_stock":                  "PreferredStock",
     "additional_paid_in_capital":       "AdditionalPaidInCapital",
     "retained_earnings":                "RetainedEarnings",
     "accumulated_oci":                  "AccumulatedOtherComprehensiveIncome",
+    "treasury_shares":                  "TreasuryShares",
+    "temporary_mezzanine_financing":    "TemporaryAndMezzanineFinancing",
     "unearned_revenue_equity":          "UnearnedRevenue",
     "total_liabilities_and_equity":     "LiabilitiesAndEquity",
+
+    # ── Statement of Equity ───────────────────────────────────
+    "dividends_equity":                 "DividendsEquity",
+    "stock_repurchases_equity":         "StockRepurchasesEquity",
+    "stock_issuances_equity":           "StockIssuancesEquity",
+    "stock_comp_equity_impact":         "StockCompensationEquityImpact",
+
+    # ── Comprehensive Income ──────────────────────────────────
+    "comprehensive_income_net":         "ComprehensiveIncomeNet",
+    "foreign_currency_translation":     "ForeignCurrencyTranslation",
+    "unrealized_gains_losses_sec":      "UnrealizedGainsLossesSecurities",
+    "pension_retirement_adjustments":   "PensionAndRetirementAdjustments",
+    "hedging_gains_losses":             "HedgingGainsLosses",
+    "aoci_reclassifications":           "AOCIReclassifications",
+    "other_comprehensive_income":       "OtherComprehensiveIncomeLoss",
 
     # ── Cash Flow — Operating ─────────────────────────────────
     "cfo":                              "NetCashFromOperatingActivities",
@@ -191,22 +259,25 @@ XBRL_MAPPINGS = {
     "debt_repayments":                  "DebtRepayments",
     "stock_repurchase_payments":        "StockRepurchasePayments",
     "stock_issuance_proceeds":          "StockIssuanceProceeds",
+    "equity_expense_income":            "EquityExpenseIncome(BuybackIssued)",
     "dividends_paid":                   "CommonDividendsPaid",
     "distributions_minority":           "DistributionsToMinorityInterests",
     "debt_issuance_costs":              "PaymentsOfDebtIssuanceCosts",
     "fx_effect_on_cash":                "ForeignExchangeEffectOnCash",
     "net_cash_financing":               "NetCashFromFinancingActivities",
 
-    # ── Summary ───────────────────────────────────────────────
+    # ── Cash Flow — Summary ───────────────────────────────────
     "net_change_in_cash":               "NetChangeInCash",
 
-    # ── Forward-Looking Disclosures ───────────────────────────
+    # ── Commitments — Operating Lease ────────────────────────
     "op_lease_commitment_y1":           "OperatingLeaseCommitmentYear1",
     "op_lease_commitment_y2":           "OperatingLeaseCommitmentYear2",
     "op_lease_commitment_y3":           "OperatingLeaseCommitmentYear3",
     "op_lease_commitment_y4":           "OperatingLeaseCommitmentYear4",
     "op_lease_commitment_y5":           "OperatingLeaseCommitmentYear5",
     "op_lease_commitment_thereafter":   "OperatingLeaseCommitmentAfterYear5",
+
+    # ── Commitments — Intangible Amortization Forecast ───────
     "intang_amort_forecast_y1":         "ForecastedIntangibleAmortizationYear1",
     "intang_amort_forecast_y2":         "ForecastedIntangibleAmortizationYear2",
     "intang_amort_forecast_y3":         "ForecastedIntangibleAmortizationYear3",
