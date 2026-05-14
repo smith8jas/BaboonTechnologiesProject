@@ -101,10 +101,8 @@ IPython.display.display(IPython.display.Image(agent.get_graph(xray=True).draw_me
 
 #Execute test
 from langchain.messages import HumanMessage
-
-messages = [HumanMessage(content="Find Apple's Revenue")]
-
-messages = agent.invoke({"messages": messages}) #Error when invoking
+messages = [HumanMessage(content="Find Apple's Revenue")] #Simulate user input
+messages = agent.invoke({"messages": messages}) #This activates the agent with the message
 
 for m in messages["messages"]:
     m.pretty_print()
