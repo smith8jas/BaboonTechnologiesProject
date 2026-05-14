@@ -2,22 +2,22 @@ XBRL_MAPPINGS = {
 
     # ── Income Statement — Revenue ────────────────────────────
     "revenue":                          "Revenue",
-    "product_revenue":                  "ProductRevenue",
-    "advertising_revenue":              "AdvertisingRevenueIS",
-    "subscription_revenue":             "SubscriptionRevenue",
-    "licensing_revenue":                "LicensingRevenue",
-    "royalty_revenue":                  "RoyaltyRevenue",
-    "franchise_revenue":                "FranchiseRevenue",
-    "rental_leasing_revenue":           "RentalAndLeasingRevenue",
-    "financial_services_revenue":       "FinancialServicesRevenue",
-    "technology_services_revenue":      "TechnologyServicesRevenue",
-    "health_care_revenue":              "HealthCareRevenue",
-    "oil_and_gas_revenue":              "OilAndGasRevenue",
-    "electric_utility_revenue":         "ElectricUtilityRevenue",
-    "government_contracts_revenue":     "GovernmentContractsRevenue",
-    "commissions_revenue":              "CommissionsRevenue",
-    "management_fee_revenue":           "ManagementFeeRevenue",
-    "tenant_reimbursements_revenue":    "TenantReimbursementsRevenue",
+    # "product_revenue":                  "ProductRevenue",
+    # "advertising_revenue":              "AdvertisingRevenueIS",
+    # "subscription_revenue":             "SubscriptionRevenue",
+    # "licensing_revenue":                "LicensingRevenue",
+    # "royalty_revenue":                  "RoyaltyRevenue",
+    # "franchise_revenue":                "FranchiseRevenue",
+    # "rental_leasing_revenue":           "RentalAndLeasingRevenue",
+    # "financial_services_revenue":       "FinancialServicesRevenue",
+    # "technology_services_revenue":      "TechnologyServicesRevenue",
+    # "health_care_revenue":              "HealthCareRevenue",
+    # "oil_and_gas_revenue":              "OilAndGasRevenue",
+    # "electric_utility_revenue":         "ElectricUtilityRevenue",
+    # "government_contracts_revenue":     "GovernmentContractsRevenue",
+    # "commissions_revenue":              "CommissionsRevenue",
+    # "management_fee_revenue":           "ManagementFeeRevenue",
+    # "tenant_reimbursements_revenue":    "TenantReimbursementsRevenue",
 
     # ── Income Statement — Cost of Revenue ───────────────────
     "cogs":                             "CostOfGoodsAndServicesSold",
@@ -195,8 +195,8 @@ XBRL_MAPPINGS = {
     "total_liabilities":                "Liabilities",
 
     # ── Balance Sheet — Equity ────────────────────────────────
-    "total_equity":                     "CommonEquity",
-    "all_equity_balance":               "AllEquityBalance",
+    "common_equity":                    "CommonEquity",
+    "total_equity":                     "AllEquityBalance",
     "total_equity_incl_minority":       "AllEquityBalanceIncludingMinorityInterest",
     "minority_interest_bs":             "MinorityInterestBS",
     "minority_interest_balance":        "MinorityInterestBalance",
@@ -226,7 +226,7 @@ XBRL_MAPPINGS = {
 
     # ── Cash Flow — Operating ─────────────────────────────────
     "cfo":                              "NetCashFromOperatingActivities",
-    "da":                               "DepreciationAmortizationCF",
+    "depreciation_amortization":        "DepreciationExpense",
     "sbc":                              "StockBasedCompensationCF",
     "deferred_tax_cf":                  "DeferredIncomeTaxCF",
     "change_in_receivables":            "ChangeInReceivables",
