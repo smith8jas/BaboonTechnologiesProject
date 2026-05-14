@@ -1,4 +1,5 @@
 from llm import CHAT_MODEL, ask_llm
+from ReactAgent import activate_agent
 
 # Chatbot. This is where the user enters an input and receives a response.
 def chatbot():
@@ -31,6 +32,10 @@ def chatbot():
 
         app_context = "for a financial valuation system"
         #generate_tasks(result, sys.modules[__name__],app_context)
+        
+        activate_agent(result)
+        
+
     return True
 
 if __name__ == "__main__":
