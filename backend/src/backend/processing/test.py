@@ -5,9 +5,15 @@ import sys
 from backend.core.config import settings
 import pandas as pd
 import json
-from backend.processing.xbrl_map import XBRL_MAPPINGS
+from backend.processing.xbrl_map import (
+    PS_MAPPINGS, 
+    IS_MAPPINGS, 
+    BS_MAPPINGS, 
+    CFS_MAPPINGS,
+)
 from backend.processing.schema import (
     Period, 
+    PerShare,
     IncomeStatement,
     BalanceSheet,
     CashFlowStatement,
@@ -29,11 +35,13 @@ def main():
     df = xbrls.facts.query().to_dataframe()
     print(df[df["standard_concept"] == "Revenue"][["concept", "fiscal_year", "period_end", "numeric_value"]].to_string())
 
-    mapped_is = map_all_periods(to_period_first(preprocess(xbrls, "income_statement")), XBRL_MAPPINGS)
-    mapped_bs = map_all_periods(to_period_first(preprocess(xbrls, "balance_sheet")),    XBRL_MAPPINGS)
-    mapped_cf = map_all_periods(to_period_first(preprocess(xbrls, "cash_flow")),        XBRL_MAPPINGS)
+    mapped_ps = map_all_periods(to_period_first(preprocess(xbrls, "income_statement")), PS_MAPPINGS)
+    mapped_is = map_all_periods(to_period_first(preprocess(xbrls, "income_statement")), IS_MAPPINGS)
+    mapped_bs = map_all_periods(to_period_first(preprocess(xbrls, "balance_sheet")),    BS_MAPPINGS)
+    mapped_cf = map_all_periods(to_period_first(preprocess(xbrls, "cash_flow")),        CFS_MAPPINGS)
 
     # ── Instantiate ───────────────────────────────────────────
+    per_share         = {p: PerShare(**mapped_ps[p]) for p in mapped_ps}
     income_statements = {p: IncomeStatement(**mapped_is[p]) for p in mapped_is}
     balance_sheets    = {p: BalanceSheet(**mapped_bs[p]) for p in mapped_bs}
     cash_flows        = {p: CashFlowStatement(**mapped_cf[p]) for p in mapped_cf}
@@ -41,6 +49,7 @@ def main():
     # ── HistoricalFinancials ──────────────────────────────────
     hf = HistoricalFinancials(
         ticker=TICKER,
+        per_share=per_share,
         income_statements=income_statements,
         balance_sheets=balance_sheets,
         cash_flows=cash_flows,
@@ -50,6 +59,10 @@ def main():
     print(f"\n{'='*50}")
     print(f"  {TICKER} — Historical Financials")
     print(f"{'='*50}")
+
+    for period in sorted(hf.per_share):
+        print(f"\n── Per Share Data [{period}] ──")
+        print(hf.per_share[period].model_dump_json(indent=2))
 
     for period in sorted(hf.income_statements):
         print(f"\n── Income Statement [{period}] ──")
@@ -81,13 +94,13 @@ def preprocess(xbrls: XBRLS, statement: str) -> dict:
         .pipe(lambda d: d[d["statement_type"] == statement_map[statement]])
         .pipe(lambda d: d[d["standard_concept"].notna()])
         .pipe(lambda d: d[~d["is_abstract"]])
-        .sort_values("is_total", ascending=False)
-        .drop_duplicates(subset=["standard_concept", "period_end"], keep="first")  # ← period_end
+        .sort_values(["is_total", "level"], ascending=[False, True])
+        .drop_duplicates(subset=["standard_concept", "period_end"], keep="first")
     )
 
     return (
         df.groupby("standard_concept")
-        .apply(lambda x: dict(zip(x["period_end"], x["numeric_value"])))  # ← period_end
+        .apply(lambda x: dict(zip(x["period_end"], x["numeric_value"])))
         .to_dict()
     )
 
@@ -116,10 +129,25 @@ def to_period_first(data: dict) -> dict[str, dict]:
 
 
 def map_keys(row: dict, mappings: dict) -> dict:
-    reverse = {v: k for k, v in mappings.items()}
-    mapped = {reverse[k]: v for k, v in row.items() if k in reverse}
-    dropped = {k: v for k, v in row.items() if k not in reverse}
-    print(f"Dropped: {json.dumps(dropped, indent=2)}")
+    reverse = {}
+    for k, v in mappings.items():
+        if isinstance(v, list):
+            for concept in v:
+                reverse[concept] = k
+        else:
+            reverse[v] = k
+
+    mapped = {}
+    for internal_key in set(reverse.values()):
+        # find first non-null match in priority order
+        candidates = [c for c, k in reverse.items() if k == internal_key]
+        for candidate in candidates:
+            if candidate in row and row[candidate] is not None:
+                mapped[internal_key] = row[candidate]
+                break
+
+    # dropped = {k: v for k, v in row.items() if k not in reverse}
+    # print(f"Dropped: {json.dumps(dropped, indent=2)}")
     return mapped
 
 

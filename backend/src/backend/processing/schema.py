@@ -8,8 +8,9 @@ from pydantic import (
 )
 
 
-class Period(BaseModel):
-    filing_date: date       # "FY" | "Q1" | "Q2" | "Q3" | "Q4"
+class PerShare(BaseModel):
+    basic_shares:                       float | None = None
+    diluted_shares:                     float | None = None   
 
 
 class IncomeStatement(BaseModel):
@@ -18,7 +19,7 @@ class IncomeStatement(BaseModel):
     revenue:                            float | None = None
     cogs:                               float | None = None
     gross_profit:                       float | None = None
-    operating_income:                   float | None = None     # = EBIT
+    ebit:                               float | None = None     # = EBIT
     tax_expense:                        float | None = None     # for NOPAT = EBIT * (1 - tax_rate)
     net_income:                         float | None = None     # sanity check
 
@@ -38,12 +39,18 @@ class IncomeStatement(BaseModel):
 
     @model_validator(mode="after")
     def check_tax_rate(self):
-        if self.operating_income and self.tax_expense:
-            effective_rate = self.tax_expense / self.operating_income
+        if self.ebit is not None and self.tax_expense is not None and self.ebit != 0:
+            effective_rate = self.tax_expense / self.ebit
             if not (0 < effective_rate < 0.6):
                 warnings.warn(f"Unusual tax rate: {effective_rate:.1%}")
         return self
 
+    @computed_field
+    @property
+    def ebiat(self) -> float | None:
+        if self.ebit is not None and self.tax_expense is not None:
+            return self.ebit - self.tax_expense
+        return None
 
 class BalanceSheet(BaseModel):
     total_current_assets:               float | None = None
@@ -56,10 +63,16 @@ class BalanceSheet(BaseModel):
     @computed_field
     @property
     def net_working_capital(self) -> float | None:
-        if self.total_current_assets and self.total_current_liabilities:
+        if self.total_current_assets is not None and self.total_current_liabilities is not None:
             return self.total_current_assets - self.total_current_liabilities
         return None
         
+    @model_validator(mode="after")
+    def fill_total_liabilities(self):
+        if self.total_liabilities is None and self.total_assets is not None and self.total_equity is not None:
+            self.total_liabilities = self.total_assets - self.total_equity
+        return self
+
     @model_validator(mode="after")
     def check_balance_sheet_identity(self):
         if all(v is not None for v in [
@@ -73,7 +86,7 @@ class BalanceSheet(BaseModel):
                     f"({diff/self.total_assets:.1%} of assets)"
                 )
         return self
-
+    
 
 class CashFlowStatement(BaseModel):
     # model_config = ConfigDict(extra="allow")
@@ -83,8 +96,27 @@ class CashFlowStatement(BaseModel):
     cfo:                                float | None = None
 
 
+    @computed_field
+    @property
+    def fcf(self) -> float | None:
+        """FCF = CFO - CapEx (primary). Falls back to EBIAT method if CFO missing."""
+        if self.cfo is not None and self.capex is not None:
+            return self.cfo - self.capex
+        return None
+    
+
+class MarketData(BaseModel):
+    ticker:               str
+    current_price:        float | None = None
+    beta:                 float | None = None
+    shares_outstanding:   float | None = None
+    market_cap:           float | None = None
+    risk_free_rate:       float | None = None  # from FRED DGS10
+    
+
 class HistoricalFinancials(BaseModel):
     ticker: str
+    per_share: dict[str, PerShare]
     income_statements: dict[str, IncomeStatement]
     balance_sheets: dict[str, BalanceSheet]
     cash_flows: dict[str, CashFlowStatement]
@@ -96,20 +128,12 @@ class HistoricalFinancials(BaseModel):
                 continue
             is_ = self.income_statements[period]
             cfs = self.cash_flows[period]
-            if is_.net_income and cfs.net_income:
+            if is_.net_income is not None and cfs.net_income is not None:
                 diff = abs(is_.net_income - cfs.net_income)
-                if diff > is_.net_income * 0.01:
+                if diff > abs(is_.net_income) * 0.01:
                     warnings.warn(
                         f"[{period}] Net income mismatch IS vs CFS: "
                         f"IS={is_.net_income:,.0f} CFS={cfs.net_income:,.0f} "
                         f"diff={diff:,.0f}"
                     )
         return self
-    
-    @computed_field
-    @property
-    def fcf(self) -> float | None:
-        """FCF = CFO - CapEx (primary). Falls back to EBIAT method if CFO missing."""
-        if self.cfo is not None and self.capex is not None:
-            return self.cfo - self.capex
-        return None
