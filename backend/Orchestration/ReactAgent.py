@@ -1,6 +1,7 @@
 from llm import CHAT_MODEL #Importing functions from ask_llm file
 from langchain.agents import create_agent
 from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage
+import json
 from typing_extensions import TypedDict, Annotated
 import operator
 from typing import Literal
@@ -35,10 +36,17 @@ def initialize_agent():
     return(agent)
 
 #Receives user_input and activates agent
-def activate_agent(user_input, context, response_type,agent):
+def activate_agent(user_input, context, response_type, agent, task_list=None):
+    message_content = user_input
+    if task_list is not None:
+        message_content = (
+            f"User query:\n{user_input}\n\n"
+            "Preprocessed task plan:\n"
+            f"{json.dumps(task_list, indent=2)}"
+        )
 
     state = {
-        "messages": [HumanMessage(content=user_input)],
+        "messages": [HumanMessage(content=message_content)],
         "context": context,
         "response_type": response_type,
         "llm_calls": 0,
@@ -67,6 +75,9 @@ def llm_call(state: AgentMemory):
     - This is a test.
     - You are a careful assistant using a ReAct-style workflow.
     - Review the available conversation and tool results before answering.
+    - If the user message includes a preprocessed task plan, use it as the execution plan.
+    - If the user message includes a preprocessed task plan, use it as the execution plan.
+    - Use the preprocessed task plan to decide which tools to call, what information each tool should retrieve or calculate, and in what order.
     - If required information is missing, uncertain, or should be calculated, call the most relevant tool.
     - Call multiple tools in the same step only when they are independent.
     - If a tool call depends on another tool's result, call the prerequisite tool first.

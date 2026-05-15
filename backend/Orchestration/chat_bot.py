@@ -1,10 +1,11 @@
+import json
+
+import llm as app_context
+from Generate_Tasks import SYSTEM_CONTEXT, generate_tasks
 from ReactAgent import activate_agent, initialize_agent
 
 # Chatbot. This is where the user enters an input and receives a response.
 def chatbot(agent):
-    # Prompt the user in a loop and keep each entry as a string.
-    last_input: str | None = None
-
     while True:
         try:
             user_input: str = input("Enter a message: ").strip()
@@ -19,20 +20,18 @@ def chatbot(agent):
         if user_input.lower() in {"exit", "quit"}:
             print("Exiting.")
             break
-        user_input
         print(f"You entered: {user_input}")
 
-        app_context = "for a financial valuation system"
         response_type = "State your final answer in an investor thesis to investors format"
-        #generate_tasks(result, sys.modules[__name__],app_context)
-        
-        print(activate_agent(user_input, app_context, response_type, agent))
+
+        task_list = generate_tasks(user_input, app_context, SYSTEM_CONTEXT)
+        print(json.dumps(task_list, indent=2))
+
+        print(activate_agent(user_input, SYSTEM_CONTEXT, response_type, agent, task_list))
 
 
     return True
 
 if __name__ == "__main__":
-    
     agent = initialize_agent()
-
     chatbot(agent)
