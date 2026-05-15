@@ -1,4 +1,5 @@
-from ReactAgent import activate_agent, initialize_agent
+from backend.src.Agent.ReactAgent import activate_agent, initialize_agent
+from backend.src.Agent.prompts import app_context, response_type
 
 # Chatbot. This is where the user enters an input and receives a response.
 def chatbot(agent):
@@ -14,7 +15,6 @@ def chatbot(agent):
         except EOFError:
             print("\nExiting.")
             break
-
         # Chatbot starts here. The lines above only handle exit conditions.
         if user_input.lower() in {"exit", "quit"}:
             print("Exiting.")
@@ -22,8 +22,8 @@ def chatbot(agent):
         user_input
         print(f"You entered: {user_input}")
 
-        app_context = "for a financial valuation system"
-        response_type = "State your final answer in an investor thesis to investors format"
+        #app_context = app_context
+        #response_type = response_type
         #generate_tasks(result, sys.modules[__name__],app_context)
         
         print(activate_agent(user_input, app_context, response_type, agent))
