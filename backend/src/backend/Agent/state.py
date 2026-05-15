@@ -1,13 +1,13 @@
-#Replace with file where chat model is called
-#from llm import CHAT_MODEL
+#Chat model
+from backend.core.llm import CHAT_MODEL
 
 from langchain.agents import create_agent
 from langchain.messages import AnyMessage
 from typing_extensions import TypedDict, Annotated
 import operator
 
-#Replace with files with tools
-#from tools import tools
+#Tools
+from backend.Agent.tools import tools
 
 model_with_tools = CHAT_MODEL.bind_tools(tools)
 tools_by_name = {tool.name: tool for tool in tools}
