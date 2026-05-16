@@ -6,6 +6,24 @@ from pydantic import (
     model_validator,
     ConfigDict,
 )
+import pandas as pd
+
+
+class CompanyMetadata(BaseModel):
+    ticker: str
+    cik: str
+    name: str
+
+    sic: str | None = None
+    industry: str | None = None              # this IS the SIC description
+
+    fiscal_year_end: str | None = None
+    entity_type: str | None = None
+    filer_category: str | None = None
+    state_of_incorporation: str | None = None
+
+    website: str | None = None
+    phone: str | None = None
 
 
 class PerShare(BaseModel):
@@ -116,10 +134,18 @@ class MarketData(BaseModel):
 
 class HistoricalFinancials(BaseModel):
     ticker: str
+    metadata: CompanyMetadata
     per_share: dict[str, PerShare]
     income_statements: dict[str, IncomeStatement]
     balance_sheets: dict[str, BalanceSheet]
     cash_flows: dict[str, CashFlowStatement]
+
+    _SECTIONS = {
+        "per_share": "per_share",
+        "income":    "income_statements",
+        "balance":   "balance_sheets",
+        "cash_flow": "cash_flows",
+    }
 
     @model_validator(mode="after")
     def check_net_income_reconciliation(self):
@@ -137,3 +163,15 @@ class HistoricalFinancials(BaseModel):
                         f"diff={diff:,.0f}"
                     )
         return self
+    
+    def to_dataframe(self, statement: str) -> pd.DataFrame:
+        """Wide DataFrame — rows = periods (asc), cols = line items."""
+        if statement not in self._SECTIONS:
+            raise ValueError(f"Unknown statement: {statement}. "
+                            f"Pick from {list(self._SECTIONS)}")
+
+        section = getattr(self, self._SECTIONS[statement])
+        df = pd.DataFrame({p: m.model_dump() for p, m in section.items()}).T
+        df.index = pd.to_datetime(df.index)
+        df.index.name = "period"
+        return df.sort_index()
