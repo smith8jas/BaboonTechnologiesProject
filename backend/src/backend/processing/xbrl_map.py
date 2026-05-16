@@ -283,3 +283,23 @@ CFS_MAPPINGS = {
     "intang_amort_forecast_y5":         "ForecastedIntangibleAmortizationYear5",
     "intang_amort_forecast_thereafter": "ForecastedIntangibleAmortizationAfterYear5",
 }
+
+
+def map_keys(row: dict, mappings: dict) -> dict:
+    reverse: dict[str, str] = {}
+    for internal, concept in mappings.items():
+        for c in (concept if isinstance(concept, list) else [concept]):
+            reverse[c] = internal
+
+    out: dict = {}
+    for internal in set(reverse.values()):
+        candidates = [c for c, k in reverse.items() if k == internal]
+        for c in candidates:
+            if row.get(c) is not None:
+                out[internal] = row[c]
+                break
+    return out
+
+
+def map_all_periods(by_period: dict, mappings: dict) -> dict:
+    return {period: map_keys(row, mappings) for period, row in by_period.items()}
