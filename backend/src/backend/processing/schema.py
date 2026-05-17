@@ -10,7 +10,6 @@ import pandas as pd
 
 
 class CompanyMetadata(BaseModel):
-    ticker: str
     cik: str
     name: str
 
@@ -124,54 +123,57 @@ class CashFlowStatement(BaseModel):
     
 
 class MarketData(BaseModel):
-    ticker:               str
     current_price:        float | None = None
     beta:                 float | None = None
     shares_outstanding:   float | None = None
     market_cap:           float | None = None
     risk_free_rate:       float | None = None  # from FRED DGS10
-    
+
+
+class FinancialPeriod(BaseModel):
+    period_end: date
+    income_statement: IncomeStatement
+    balance_sheet: BalanceSheet
+    cash_flow: CashFlowStatement
+    per_share: PerShare
+
+    @model_validator(mode="after")
+    def check_net_income_reconciliation(self):
+        ni_is = self.income_statement.net_income
+        ni_cf = self.cash_flow.net_income
+        if ni_is is not None and ni_cf is not None:
+            diff = abs(ni_is - ni_cf)
+            if diff > abs(ni_is) * 0.01:
+                warnings.warn(
+                    f"[{self.period_end}] NI mismatch IS vs CFS: "
+                    f"IS={ni_is:,.0f} CFS={ni_cf:,.0f} diff={diff:,.0f}"
+                )
+        return self
+
 
 class HistoricalFinancials(BaseModel):
     ticker: str
     metadata: CompanyMetadata
-    per_share: dict[str, PerShare]
-    income_statements: dict[str, IncomeStatement]
-    balance_sheets: dict[str, BalanceSheet]
-    cash_flows: dict[str, CashFlowStatement]
+    periods: list[FinancialPeriod]   # sorted oldest → newest
 
     _SECTIONS = {
+        "income":    "income_statement",
+        "balance":   "balance_sheet",
+        "cash_flow": "cash_flow",
         "per_share": "per_share",
-        "income":    "income_statements",
-        "balance":   "balance_sheets",
-        "cash_flow": "cash_flows",
     }
 
-    @model_validator(mode="after")
-    def check_net_income_reconciliation(self):
-        for period in self.income_statements:
-            if period not in self.cash_flows:
-                continue
-            is_ = self.income_statements[period]
-            cfs = self.cash_flows[period]
-            if is_.net_income is not None and cfs.net_income is not None:
-                diff = abs(is_.net_income - cfs.net_income)
-                if diff > abs(is_.net_income) * 0.01:
-                    warnings.warn(
-                        f"[{period}] Net income mismatch IS vs CFS: "
-                        f"IS={is_.net_income:,.0f} CFS={cfs.net_income:,.0f} "
-                        f"diff={diff:,.0f}"
-                    )
-        return self
-    
     def to_dataframe(self, statement: str) -> pd.DataFrame:
         """Wide DataFrame — rows = periods (asc), cols = line items."""
         if statement not in self._SECTIONS:
             raise ValueError(f"Unknown statement: {statement}. "
                             f"Pick from {list(self._SECTIONS)}")
-
-        section = getattr(self, self._SECTIONS[statement])
-        df = pd.DataFrame({p: m.model_dump() for p, m in section.items()}).T
+        
+        attr = self._SECTIONS[statement]
+        df = pd.DataFrame({
+            p.period_end: getattr(p, attr).model_dump()
+            for p in self.periods
+        }).T
         df.index = pd.to_datetime(df.index)
         df.index.name = "period"
         return df.sort_index()
