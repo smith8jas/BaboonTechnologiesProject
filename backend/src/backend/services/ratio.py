@@ -15,6 +15,9 @@ def main():
     print("=======================")
     liquidity_ratios = get_liquidity_ratios(hf)
     print(json.dumps(liquidity_ratios, indent=2))
+    print("=======================")
+    profitability_ratios = get_profitability_ratios(hf)
+    print(json.dumps(profitability_ratios, indent=2))
 
 
 def current_ratio(
@@ -85,6 +88,39 @@ def interest_coverage(
     return [
         round(e / ie, 2) if ie not in (0, None) else None
         for e, ie in zip(ebit, interest_expense)
+    ]
+
+
+def gross_profit_margin(
+    gross_profit: List[float],
+    revenue: List[float]
+) -> List[float | None]:
+
+    return [
+        round(g / r, 2) if r not in (0, None) else None
+        for g, r in zip(gross_profit, revenue)
+    ]
+
+
+def ebit_margin(
+    ebit: List[float],
+    revenue: List[float]
+) -> List[float | None]:
+
+    return [
+        round(e / r, 2) if r not in (0, None) else None
+        for e, r in zip(ebit, revenue)
+    ]
+
+
+def net_margin(
+    net_income: List[float],
+    revenue: List[float]
+) -> List[float | None]:
+
+    return [
+        round(ni / r, 2) if r not in (0, None) else None
+        for ni, r in zip(net_income, revenue)
     ]
 
 
@@ -163,6 +199,45 @@ def get_solvency_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str,
             debt_equity_ratios,
             debt_assets_ratios,
             interest_coverages
+        )
+    }
+
+
+def get_profitability_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str, float | None]]:
+
+    dates = [f.fiscal_year for f in financials.periods]
+
+    revenue = [f.income_statement.revenue for f in financials.periods]
+    gross_profit = [f.income_statement.gross_profit for f in financials.periods]
+    ebit = [f.income_statement.ebit for f in financials.periods]
+    net_income = [f.income_statement.net_income for f in financials.periods]
+
+    gross_profit_margins = gross_profit_margin(
+        gross_profit,
+        revenue
+    )
+
+    ebit_margins = ebit_margin(
+        ebit,
+        revenue
+    )
+
+    net_margins = net_margin(
+        net_income,
+        revenue
+    )
+
+    return {
+        date: {
+            "gross_profit_margin": gpm,
+            "ebit_margin": em,
+            "net_profit_margin": npm,
+        }
+        for date, gpm, em, npm in zip(
+            dates,
+            gross_profit_margins,
+            ebit_margins,
+            net_margins
         )
     }
 
