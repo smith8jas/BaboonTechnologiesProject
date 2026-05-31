@@ -1,6 +1,20 @@
 """Liquidity and solvency ratio calculations."""
 
 from typing import List, Dict
+from backend.processing.schema import HistoricalFinancials
+from backend.services.financials import get_financials
+import json
+
+
+def main():
+    hf = get_financials("TSLA", 5)
+    print(hf.model_dump_json(indent=2))
+    print("=======================")
+    solvency_ratios = get_solvency_ratios(hf)
+    print(json.dumps(solvency_ratios, indent=2))
+    print("=======================")
+    liquidity_ratios = get_liquidity_ratios(hf)
+    print(json.dumps(liquidity_ratios, indent=2))
 
 
 def current_ratio(
@@ -74,14 +88,13 @@ def interest_coverage(
     ]
 
 
-def get_liquidity_ratios(fin) -> Dict[str, Dict[str, float | None]]:
+def get_liquidity_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str, float | None]]:
 
-    dates = fin["dates"]
-
-    current_assets = fin["current_assets"]
-    current_liabilities = fin["current_liabilities"]
-    inventory = fin["inventory"]
-    cash = fin["cash"]
+    dates = [f.fiscal_year for f in financials.periods]
+    current_assets = [f.balance_sheet.total_current_assets for f in financials.periods]
+    current_liabilities = [f.balance_sheet.total_current_liabilities for f in financials.periods]
+    inventory = [f.balance_sheet.inventory for f in financials.periods]
+    cash = [f.balance_sheet.cash for f in financials.periods]
 
     current_ratios = current_ratio(
         current_assets,
@@ -114,15 +127,15 @@ def get_liquidity_ratios(fin) -> Dict[str, Dict[str, float | None]]:
     }
 
 
-def get_solvency_ratios(fin) -> Dict[str, Dict[str, float | None]]:
+def get_solvency_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str, float | None]]:
 
-    dates = fin["dates"]
+    dates = [f.fiscal_year for f in financials.periods]
 
-    total_liabilities = fin["total_liabilities"]
-    total_equity = fin["total_equity"]
-    total_assets = fin["total_assets"]
-    ebit = fin["ebit"]
-    interest_expense = fin["interest_expense"]
+    total_liabilities = [f.balance_sheet.total_liabilities for f in financials.periods]
+    total_equity = [f.balance_sheet.total_equity for f in financials.periods]
+    total_assets = [f.balance_sheet.total_assets for f in financials.periods]
+    ebit = [f.income_statement.ebit for f in financials.periods]
+    interest_expense = [f.income_statement.interest_expense for f in financials.periods]
 
     debt_equity_ratios = debt_to_equity(
         total_liabilities,
@@ -154,3 +167,5 @@ def get_solvency_ratios(fin) -> Dict[str, Dict[str, float | None]]:
     }
 
 
+if __name__ == "__main__":
+    main()
