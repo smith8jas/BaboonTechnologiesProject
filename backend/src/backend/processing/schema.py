@@ -31,8 +31,6 @@ class PerShare(BaseModel):
 
 
 class IncomeStatement(BaseModel):
-    # period: Period   # ← add ` | None = None`
-
     revenue:                            float | None = None
     cogs:                               float | None = None
     gross_profit:                       float | None = None
@@ -192,3 +190,46 @@ class HistoricalFinancials(BaseModel):
         df.index = pd.to_datetime(df.index)
         df.index.name = "period"
         return df.sort_index()
+    
+
+class ValuationInputs(BaseModel):
+    ticker: str
+    risk_free_rate: float
+    beta: float
+    equity_risk_premium: float              # Missing
+    cost_of_debt: float                     # Pre-tax
+    market_cap: float
+    shares_outstanding: float
+    total_debt: float
+    tax_rate: float
+    long_term_growth_rate: float            # From industry growth (or GDP growth)
+    projection_years: int = 5
+
+    @computed_field
+    @property
+    def cost_of_capital(self) -> float:
+        return (self.risk_free_rate + self.beta * self.equity_risk_premium)
+    
+    @computed_field
+    @property
+    def wacc(self) -> float:
+        w_e = self.market_cap / (self.market_cap + self.total_debt)
+        w_d = self.total_debt / (self.market_cap + self.total_debt)
+        return (self.cost_of_capital * w_e) + (self.cost_of_debt * (1 - self.tax_rate) * w_d)
+
+    @model_validator(mode="after")
+    def check_wacc(self):
+        if self.wacc < self.long_term_growth_rate:
+            warnings.warn(
+                f"WACC ({self.wacc:.1%}) is below long-term growth rate "
+                f"({self.long_term_growth_rate:.1%}) — terminal value will be negative."
+            )
+        return self
+
+class DCFOutput(BaseModel):
+    ticker: str
+    fiscal_year: str
+    intrinsic_value_per_share: float
+    terminal_value: float
+    enterprise_value: float
+    projected_fcff: list[float]
