@@ -147,6 +147,10 @@ def main():
     print()  # trailing newline
 
 
+    # DEBUG
+    section("Model dump")
+    print(hf.model_dump_json(indent=2))
+
 # Helper formatting functions -- IGNORE
 
 def fmt_money(value: float | None, unit: str = "B") -> str:

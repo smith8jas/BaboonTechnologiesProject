@@ -39,6 +39,8 @@ class IncomeStatement(BaseModel):
     ebit:                               float | None = None     # = EBIT
     tax_expense:                        float | None = None     # for NOPAT = EBIT * (1 - tax_rate)
     net_income:                         float | None = None     # sanity check
+    interest_expense:                   float | None = None
+    depreciation_expense:               float | None = None
 
     @model_validator(mode="after")
     def fill_gross_profit(self):
@@ -73,6 +75,8 @@ class BalanceSheet(BaseModel):
     total_current_assets:               float | None = None
     cash:                               float | None = None
     total_assets:                       float | None = None
+    inventory:                          float | None = None
+    long_term_debt:                     float | None = None
     total_current_liabilities:          float | None = None    
     total_liabilities:                  float | None = None
     total_equity:                       float | None = None
@@ -132,6 +136,7 @@ class MarketData(BaseModel):
 
 class FinancialPeriod(BaseModel):
     period_end: date
+    fiscal_year: str | None = None        # ← add this
     income_statement: IncomeStatement
     balance_sheet: BalanceSheet
     cash_flow: CashFlowStatement
@@ -155,6 +160,16 @@ class HistoricalFinancials(BaseModel):
     ticker: str
     metadata: CompanyMetadata
     periods: list[FinancialPeriod]   # sorted oldest → newest
+
+    @model_validator(mode="after")
+    def set_fiscal_years(self):
+        fy_end = self.metadata.fiscal_year_end
+        if fy_end:
+            fy_month = int(fy_end[:2])
+            for period in self.periods:
+                year = period.period_end.year if fy_month >= 6 else period.period_end.year - 1
+                period.fiscal_year = f"FY{year}"
+        return self
 
     _SECTIONS = {
         "income":    "income_statement",
