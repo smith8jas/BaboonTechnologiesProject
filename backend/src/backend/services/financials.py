@@ -5,6 +5,7 @@ from datetime import date
 from backend.adapters.edgar import Edgar
 from backend.adapters.yahoo_finance import fetch_yahoo_market
 from backend.adapters.fred import fetch_risk_free_rate
+from backend.adapters.damodaran import fetch_equity_risk_premium
 from backend.processing.xbrl_map import (
     PS_MAPPINGS,
     IS_MAPPINGS,
@@ -14,6 +15,7 @@ from backend.processing.xbrl_map import (
 )
 from backend.processing.schema import (
     MarketData,
+    SectorData,
     PerShare,
     IncomeStatement,
     BalanceSheet,
@@ -86,4 +88,10 @@ def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
         shares_outstanding=yahoo["shares_outstanding"],
         market_cap=yahoo["market_cap"],
         risk_free_rate=rfr,
+    )
+
+
+def get_sector_data(year) -> SectorData:
+    return SectorData(
+        equity_risk_premium=fetch_equity_risk_premium(year)
     )

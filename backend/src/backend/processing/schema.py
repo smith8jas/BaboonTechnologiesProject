@@ -129,7 +129,13 @@ class MarketData(BaseModel):
     beta:                 float | None = None
     shares_outstanding:   float | None = None
     market_cap:           float | None = None
-    risk_free_rate:       float | None = None  # from FRED DGS10
+    risk_free_rate:       float | None = None       # from FRED DGS10
+
+
+class SectorData(BaseModel):
+    # industry: str | None = None
+    equity_risk_premium: float | None = None
+    long_term_growth_rate: float | None = 0.025     # Hardcoded at 2.5% (can change)
 
 
 class FinancialPeriod(BaseModel):
