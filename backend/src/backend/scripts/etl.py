@@ -24,8 +24,10 @@ from backend.processing.schema import(
     CompanyMetadata,        # ''
     FinancialPeriod,
     HistoricalFinancials,   # All aggregated
+    ValuationInputs,
+    DCFOutput,
 )
-
+from backend.services.financials import get_sector_data
 
 
 def main():
@@ -46,6 +48,9 @@ def main():
     # Raw yfinance data
     yahoo = fetch_yahoo_market(TICKER)   # price, beta, shares, market_cap
     rfr   = fetch_risk_free_rate()       # FRED DGS10
+
+    # Damodaran
+    sector_data = get_sector_data(date.today().year)
 
     # 2. Transform ---------------------------------------------------------
 
@@ -87,6 +92,36 @@ def main():
         risk_free_rate=rfr,
     )
 
+    # Cost of debt — per-company
+    latest_is = hf.periods[-1].income_statement
+    latest_bs = hf.periods[-1].balance_sheet
+    cost_of_debt = (
+        latest_is.interest_expense / latest_bs.long_term_debt
+        if latest_is.interest_expense and latest_bs.long_term_debt
+        else 0.05
+    )
+
+    # Tax rate — trailing average inline
+    tax_rates = [
+        p.income_statement.tax_expense / p.income_statement.ebit
+        for p in hf.periods
+        if p.income_statement.tax_expense and p.income_statement.ebit
+    ]
+    tax_rate = sum(tax_rates) / len(tax_rates) if tax_rates else 0.21
+
+    inputs = ValuationInputs(
+        ticker=TICKER,
+        risk_free_rate=md.risk_free_rate,
+        beta=md.beta,
+        equity_risk_premium=sector_data.equity_risk_premium,
+        cost_of_debt=cost_of_debt,
+        market_cap=md.market_cap,
+        shares_outstanding=md.shares_outstanding,
+        total_debt = (latest_bs.long_term_debt or 0.0) + (latest_bs.short_term_debt or 0.0),
+        tax_rate=tax_rate,
+        long_term_growth_rate=sector_data.long_term_growth_rate,
+    )
+
     # 3. Load
 
     # ─────────────────────────────────────────────────────────────
@@ -95,6 +130,42 @@ def main():
     print(f"  CIK: {hf.metadata.cik}  |  FY end: {hf.metadata.fiscal_year_end}")
     print(f"  {len(hf.periods)} fiscal periods loaded "
         f"({hf.periods[0].period_end} → {hf.periods[-1].period_end})")
+    
+    # ─────────────────────────────────────────────────────────────
+    section("Sector Data")
+    print(f"  ERP:              {fmt_pct(sector_data.equity_risk_premium)}")
+    print(f"  Terminal growth:  {fmt_pct(sector_data.long_term_growth_rate)}")
+
+    # ─────────────────────────────────────────────────────────────
+    section("Market Data")
+    print(f"  {'Risk-free rate:':<22} {fmt_pct(md.risk_free_rate)}")
+    print(f"  {'Beta:':<22} {md.beta:>9.3f}")
+    print(f"  {'Current Price:':<22} ${md.current_price:>8,.2f}")
+    print(f"  {'Shares Outstanding:':<22} {md.shares_outstanding/1e9:>8,.2f}B")
+    print(f"  {'Market Cap:':<22} {md.market_cap/1e9:>8,.2f}B")
+
+    # ─────────────────────────────────────────────────────────────
+    section("Valuation Inputs")
+    print(f"  Beta:             {inputs.beta:>9,.3f}")
+    print(f"  Risk-free rate:   {fmt_pct(inputs.risk_free_rate)}")
+    print(f"  ERP:              {fmt_pct(inputs.equity_risk_premium)}")
+    print(f"  Cost of equity:   {fmt_pct(inputs.cost_of_capital)}")
+    print(f"  Cost of debt:     {fmt_pct(inputs.cost_of_debt)}")
+    print(f"  WACC:             {fmt_pct(inputs.wacc)}")
+    print(f"  Terminal growth:  {fmt_pct(inputs.long_term_growth_rate)}")
+    print(f"  Total debt:       {inputs.total_debt/1e9:>8,.2f}B")
+
+    # ─────────────────────────────────────────────────────────────
+    section("Working Capital")
+    print(f"  {'Period':<12} {'NWC':>12} {'ΔNWC':>12}")
+    for i, p in enumerate(hf.periods):
+        nwc = p.balance_sheet.net_working_capital
+        delta = (
+            nwc - hf.periods[i - 1].balance_sheet.net_working_capital
+            if i > 0 and nwc is not None and hf.periods[i - 1].balance_sheet.net_working_capital is not None
+            else None
+        )
+        print(f"  {str(p.period_end):<12} {fmt_money(nwc)} {fmt_money(delta)}")
 
     # ─────────────────────────────────────────────────────────────
     section("Latest period — snapshot")

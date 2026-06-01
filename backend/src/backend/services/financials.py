@@ -73,11 +73,11 @@ def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
     Pull market data (price, beta, shares, market cap) and optional risk-free rate.
 
     Args:
-        ticker: Stock ticker symbol.
+        # ticker: Stock ticker symbol.
         include_rfr: If True, fetch FRED DGS10 risk-free rate.
 
     Returns:
-        MarketData with current market values.
+        # MarketData with current market values.
     """
     yahoo = fetch_yahoo_market(ticker)
     rfr = fetch_risk_free_rate() if include_rfr else None
