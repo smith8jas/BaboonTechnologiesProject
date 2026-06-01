@@ -7,6 +7,8 @@ MRP_URL = "https://www.stern.nyu.edu/~adamodar/pc/datasets/histimpl.xls"
 def fetch_equity_risk_premium(year: int | None = None) -> float | None:
     try:
         df = pd.read_excel(MRP_URL, skiprows=6, index_col="Year")
+        df = df[pd.to_numeric(df.index, errors='coerce').notna()]
+        df.index = df.index.astype(int)
     except Exception:
         return None
     if year is None or year not in df.index:
