@@ -200,17 +200,17 @@ class HistoricalFinancials(BaseModel):
     
 
 class ValuationInputs(BaseModel):
-    ticker: str
-    risk_free_rate: float
-    beta: float
-    equity_risk_premium: float              # Missing
-    cost_of_debt: float                     # Pre-tax
-    market_cap: float
-    shares_outstanding: float
-    total_debt: float
-    tax_rate: float
-    long_term_growth_rate: float            # From industry growth (or GDP growth)
-    projection_years: int = 5
+    ticker:                         str
+    risk_free_rate:                 float
+    beta:                           float
+    equity_risk_premium:            float              # Missing
+    cost_of_debt:                   float                     # Pre-tax
+    market_cap:                     float
+    shares_outstanding:             float
+    total_debt:                     float
+    tax_rate:                       float
+    long_term_growth_rate:          float            # From industry growth (or GDP growth)
+    projection_years:               int = 5
 
     @computed_field
     @property
@@ -232,6 +232,16 @@ class ValuationInputs(BaseModel):
                 f"({self.long_term_growth_rate:.1%}) — terminal value will be negative."
             )
         return self
+    
+
+class Assumptions(BaseModel):
+    revenue_growth:                                 float
+    ebit_margin:                                    float
+    tax_rate:                                       float
+    depreciation_and_amortization_over_revenue:     float
+    capex_over_revenue:                             float
+    nwc_over_revenue:                               float
+
 
 class DCFOutput(BaseModel):
     ticker: str
