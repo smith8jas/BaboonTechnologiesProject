@@ -74,6 +74,8 @@ class BalanceSheet(BaseModel):
     cash:                               float | None = None
     total_assets:                       float | None = None
     inventory:                          float | None = None
+    accounts_receivable:                float | None = None
+    accounts_payable:                   float | None = None
     short_term_debt:                    float | None = None
     long_term_debt:                     float | None = None
     total_current_liabilities:          float | None = None    
