@@ -1,7 +1,10 @@
 """Growth rate calculations."""
 
+from langchain_core.tools import tool
+
 from backend.processing.schema import HistoricalFinancials
 from backend.services.financials import get_financials
+from backend.services.tool_metadata import agent_tool
 import json
 
 
@@ -17,7 +20,9 @@ def _growth(prev: float | None, curr: float | None) -> float | None:
     return None
 
 
+@tool
 def get_income_statement_growth_rates(hf: HistoricalFinancials) -> dict:
+    """Calculate year-over-year growth rates for income statement fields."""
     result = {}
     periods = hf.periods
     for i, p in enumerate(periods):
@@ -32,7 +37,9 @@ def get_income_statement_growth_rates(hf: HistoricalFinancials) -> dict:
     return result
 
 
+@tool
 def get_balance_sheet_growth_rates(hf: HistoricalFinancials) -> dict:
+    """Calculate year-over-year growth rates for balance sheet fields."""
     result = {}
     periods = hf.periods
     for i, p in enumerate(periods):
@@ -45,6 +52,24 @@ def get_balance_sheet_growth_rates(hf: HistoricalFinancials) -> dict:
             k: _growth(prev[k], curr[k]) for k in curr
         }
     return result
+
+
+growth_tools = [
+    agent_tool(
+        get_income_statement_growth_rates,
+        group="growth_rate",
+        route="growth_rates",
+        capability="Calculate year-over-year growth rates for income statement fields.",
+        requires_financials=True,
+    ),
+    agent_tool(
+        get_balance_sheet_growth_rates,
+        group="growth_rate",
+        route="growth_rates",
+        capability="Calculate year-over-year growth rates for balance sheet fields.",
+        requires_financials=True,
+    ),
+]
 
 
 if __name__ == "__main__":

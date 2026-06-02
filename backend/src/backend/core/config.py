@@ -1,6 +1,8 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
+
 class Settings(BaseSettings):
     app_name: str = "Baboon Technologies API"
     environment: str = "development"
@@ -11,7 +13,7 @@ class Settings(BaseSettings):
     llm_model: str
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BACKEND_ROOT / ".env",
         env_file_encoding="utf-8"
     )
 

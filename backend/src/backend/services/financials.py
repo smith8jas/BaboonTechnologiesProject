@@ -2,6 +2,8 @@
 
 from datetime import date
 
+from langchain_core.tools import tool
+
 from backend.adapters.edgar import Edgar
 from backend.adapters.yahoo_finance import fetch_yahoo_market
 from backend.adapters.fred import fetch_risk_free_rate
@@ -24,6 +26,10 @@ from backend.processing.schema import (
     FinancialPeriod,
     HistoricalFinancials,
 )
+from backend.services.tool_metadata import agent_tool
+
+
+@tool
 
 
 def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
@@ -68,11 +74,17 @@ def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
     )
 
 
+@tool
 def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
     """
     Pull market data (price, beta, shares, market cap) and optional risk-free rate.
 
     Args:
+        ticker: Stock ticker symbol.
+        include_rfr: If True, fetch FRED DGS10 risk-free rate.
+
+    Returns:
+        MarketData with current market values.
         # ticker: Stock ticker symbol.
         include_rfr: If True, fetch FRED DGS10 risk-free rate.
 
@@ -91,7 +103,31 @@ def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
     )
 
 
+@tool
 def get_sector_data(year) -> SectorData:
+    """Pull sector-level financial assumptions for a given year."""
     return SectorData(
         equity_risk_premium=fetch_equity_risk_premium(year)
     )
+
+
+financial_tools = [
+    agent_tool(
+        get_financials,
+        group="financial_statement",
+        route="financials",
+        capability="Pull historical company financial statements by ticker and fiscal-period span.",
+    ),
+    agent_tool(
+        get_market_data,
+        group="market_data",
+        route="market_data",
+        capability="Pull current market data such as price, beta, shares, market cap, and optional risk-free rate.",
+    ),
+    agent_tool(
+        get_sector_data,
+        group="sector_data",
+        route="sector_data",
+        capability="Pull sector-level valuation assumptions for a requested year.",
+    ),
+]
