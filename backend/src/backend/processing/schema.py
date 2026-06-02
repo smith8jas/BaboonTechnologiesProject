@@ -111,6 +111,7 @@ class BalanceSheet(BaseModel):
 class CashFlowStatement(BaseModel):
     # model_config = ConfigDict(extra="allow")
     net_income:                         float | None = None
+    interest_expense:                   float | None = None
     capex:                              float | None = None
     depreciation_amortization:          float | None = None
     cfo:                                float | None = None
@@ -203,13 +204,13 @@ class ValuationInputs(BaseModel):
     ticker:                         str
     risk_free_rate:                 float
     beta:                           float
-    equity_risk_premium:            float              # Missing
-    cost_of_debt:                   float                     # Pre-tax
+    equity_risk_premium:            float               # Missing
+    cost_of_debt:                   float               # Pre-tax
     market_cap:                     float
     shares_outstanding:             float
     total_debt:                     float
     tax_rate:                       float
-    long_term_growth_rate:          float            # From industry growth (or GDP growth)
+    long_term_growth_rate:          float               # From industry growth (or GDP growth)
     projection_years:               int = 5
 
     @computed_field
@@ -244,9 +245,9 @@ class Assumptions(BaseModel):
 
 
 class DCFOutput(BaseModel):
-    ticker: str
-    fiscal_year: str
-    intrinsic_value_per_share: float
-    terminal_value: float
-    enterprise_value: float
-    projected_fcff: list[float]
+    ticker:                         str
+    fiscal_year:                    str
+    intrinsic_value_per_share:      float
+    terminal_value:                 float
+    enterprise_value:               float
+    projected_fcff:                 list[float]

@@ -1,6 +1,9 @@
 from backend.processing.schema import (
     HistoricalFinancials,
+    MarketData,
+    SectorData,
     Assumptions,
+    ValuationInputs
 )
 
 
@@ -9,7 +12,9 @@ def _avg(values: list) -> float | None:
     return sum(clean) / len(clean) if clean else None
 
 
-def build_assumptions(hf: HistoricalFinancials) -> Assumptions:
+def build_assumptions(hf: HistoricalFinancials) -> Assumptions: # Can (and should in the near future) accept other classes like 
+                                                                # MarketData, SectorData, even SentimentAnalysis!!!
+                                                                # This is the heart of the DCF engine!
     periods = hf.periods
     rev = [p.income_statement.revenue for p in periods]
 
@@ -58,3 +63,47 @@ def build_assumptions(hf: HistoricalFinancials) -> Assumptions:
         "nwc_over_revenue":                             nwc_pct        or 0.0,
     }
     return Assumptions(**derived)
+
+
+def build_valuation_inputs(hf:HistoricalFinancials, md: MarketData, sd: SectorData) -> ValuationInputs:
+
+
+    latest_bs = hf.periods[-1].balance_sheet
+
+    interest_expenses = [
+        abs(p.income_statement.interest_expense) / p.balance_sheet.long_term_debt
+        for p in hf.periods
+        if p.income_statement.interest_expense and p.balance_sheet.long_term_debt
+    ]
+    if not interest_expenses:
+        interest_expenses = [
+            abs(p.cash_flow.interest_expense) / p.balance_sheet.long_term_debt
+            for p in hf.periods
+            if p.cash_flow.interest_expense and p.balance_sheet.long_term_debt
+        ]
+
+    cost_of_debt = sum(interest_expenses) / len(interest_expenses) if interest_expenses else None
+
+    total_debt = (latest_bs.long_term_debt or 0.0) + (latest_bs.short_term_debt or 0.0)
+
+    # Tax rate — trailing average inline
+    tax_rates = [
+        p.income_statement.tax_expense / p.income_statement.ebit
+        for p in hf.periods
+        # if p.income_statement.tax_expense and p.income_statement.ebit     (implement fallback later)
+    ]
+    tax_rate = sum(tax_rates) / len(tax_rates) if tax_rates else None   # else sd.tax_rates (uncomment once we have 
+                                                                        # damodaran tax rates mapped from sic code)
+
+    return ValuationInputs(
+        ticker=hf.ticker,
+        risk_free_rate=md.risk_free_rate,
+        beta=md.beta,
+        equity_risk_premium=sd.equity_risk_premium,
+        cost_of_debt=cost_of_debt,
+        market_cap=md.market_cap,
+        shares_outstanding=md.shares_outstanding,
+        total_debt=total_debt,
+        tax_rate=tax_rate,
+        long_term_growth_rate=sd.long_term_growth_rate,
+    )
