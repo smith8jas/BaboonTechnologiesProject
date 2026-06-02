@@ -1,4 +1,4 @@
-from backend.main import app
+#from backend.main import app
 
 
 def main() -> None:
