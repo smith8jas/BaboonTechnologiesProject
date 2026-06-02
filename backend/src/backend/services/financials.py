@@ -30,6 +30,8 @@ from backend.services.tool_metadata import agent_tool
 
 
 @tool
+
+
 def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
     """
     Pull, normalize, and validate historical financials for a ticker.
@@ -83,6 +85,11 @@ def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
 
     Returns:
         MarketData with current market values.
+        # ticker: Stock ticker symbol.
+        include_rfr: If True, fetch FRED DGS10 risk-free rate.
+
+    Returns:
+        # MarketData with current market values.
     """
     yahoo = fetch_yahoo_market(ticker)
     rfr = fetch_risk_free_rate() if include_rfr else None

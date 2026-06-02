@@ -74,6 +74,9 @@ class BalanceSheet(BaseModel):
     cash:                               float | None = None
     total_assets:                       float | None = None
     inventory:                          float | None = None
+    accounts_receivable:                float | None = None
+    accounts_payable:                   float | None = None
+    short_term_debt:                    float | None = None
     long_term_debt:                     float | None = None
     total_current_liabilities:          float | None = None    
     total_liabilities:                  float | None = None
@@ -110,6 +113,7 @@ class BalanceSheet(BaseModel):
 class CashFlowStatement(BaseModel):
     # model_config = ConfigDict(extra="allow")
     net_income:                         float | None = None
+    interest_expense:                   float | None = None
     capex:                              float | None = None
     depreciation_amortization:          float | None = None
     cfo:                                float | None = None
@@ -199,17 +203,17 @@ class HistoricalFinancials(BaseModel):
     
 
 class ValuationInputs(BaseModel):
-    ticker: str
-    risk_free_rate: float
-    beta: float
-    equity_risk_premium: float              # Missing
-    cost_of_debt: float                     # Pre-tax
-    market_cap: float
-    shares_outstanding: float
-    total_debt: float
-    tax_rate: float
-    long_term_growth_rate: float            # From industry growth (or GDP growth)
-    projection_years: int = 5
+    ticker:                         str
+    risk_free_rate:                 float
+    beta:                           float
+    equity_risk_premium:            float               # Missing
+    cost_of_debt:                   float               # Pre-tax
+    market_cap:                     float
+    shares_outstanding:             float
+    total_debt:                     float
+    tax_rate:                       float
+    long_term_growth_rate:          float               # From industry growth (or GDP growth)
+    projection_years:               int = 5
 
     @computed_field
     @property
@@ -231,11 +235,32 @@ class ValuationInputs(BaseModel):
                 f"({self.long_term_growth_rate:.1%}) — terminal value will be negative."
             )
         return self
+    
+
+class Assumptions(BaseModel):
+    revenue_growth:                                 float
+    ebit_margin:                                    float
+    tax_rate:                                       float
+    depreciation_and_amortization_over_revenue:     float
+    capex_over_revenue:                             float
+    nwc_over_revenue:                               float
+
 
 class DCFOutput(BaseModel):
-    ticker: str
-    fiscal_year: str
-    intrinsic_value_per_share: float
-    terminal_value: float
-    enterprise_value: float
-    projected_fcff: list[float]
+    ticker:                     str
+    fiscal_year:                str
+    projection_years:           list[str]    # projection years ["FY2026"...]
+    intrinsic_value_per_share:  float
+    terminal_value:             float
+    pv_terminal:                float
+    tv_pct_of_ev:               float
+    enterprise_value:           float
+    projected_fcff:             list[float]
+    pv_fcff:                    list[float]
+    projected_revenue:          list[float]
+    projected_ebit:             list[float]
+    projected_ebiat:            list[float]
+    projected_da:               list[float]
+    projected_capex:            list[float]
+    projected_delta_nwc:        list[float]
+    pv_factors:                 list[float]

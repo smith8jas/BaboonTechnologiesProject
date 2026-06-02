@@ -48,7 +48,15 @@ IS_MAPPINGS = {
     "ebit":                             "OperatingIncomeLoss",
 
     # ── Non-Operating Items ───────────────────────────────────
-    "interest_expense":                 "InterestExpense",
+    "interest_expense": [
+        "InterestExpense",                       # 1.0,   4,458
+        "InterestExpenseNonoperating",           # 0.984, 1,924
+        "InterestIncomeExpenseNonoperatingNet",  # 0.970,   893 — net
+        "FinanceCosts",                          # 0.970,   510
+        "InterestExpenseOperating",              # 0.937,   549
+        "InterestAndDebtExpense",               # 0.500,   193
+        # "NonoperatingIncomeExpense",             # fallback — AAPL
+    ],
     "interest_income":                  "InterestIncome",
     "interest_and_dividend_income":     "InterestAndDividendIncome",
     "nonoperating_income":              "NonoperatingIncomeExpense",
@@ -226,6 +234,7 @@ CFS_MAPPINGS = {
                                             "DepreciationDepletionAndAmortization",
                                         ],
     "sbc":                              "StockBasedCompensationCF",
+    "interest_expense": "InterestExpense",
     "deferred_tax_cf":                  "DeferredIncomeTaxCF",
     "change_in_receivables":            "ChangeInReceivables",
     "change_in_inventory":              "ChangeInInventory",
@@ -286,14 +295,9 @@ CFS_MAPPINGS = {
 
 
 def map_keys(row: dict, mappings: dict) -> dict:
-    reverse: dict[str, str] = {}
-    for internal, concept in mappings.items():
-        for c in (concept if isinstance(concept, list) else [concept]):
-            reverse[c] = internal
-
     out: dict = {}
-    for internal in set(reverse.values()):
-        candidates = [c for c, k in reverse.items() if k == internal]
+    for internal, concept in mappings.items():
+        candidates = concept if isinstance(concept, list) else [concept]
         for c in candidates:
             if row.get(c) is not None:
                 out[internal] = row[c]
