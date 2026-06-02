@@ -245,9 +245,20 @@ class Assumptions(BaseModel):
 
 
 class DCFOutput(BaseModel):
-    ticker:                         str
-    fiscal_year:                    str
-    intrinsic_value_per_share:      float
-    terminal_value:                 float
-    enterprise_value:               float
-    projected_fcff:                 list[float]
+    ticker:                     str
+    fiscal_year:                str
+    projection_years:           list[str]    # projection years ["FY2026"...]
+    intrinsic_value_per_share:  float
+    terminal_value:             float
+    pv_terminal:                float
+    tv_pct_of_ev:               float
+    enterprise_value:           float
+    projected_fcff:             list[float]
+    pv_fcff:                    list[float]
+    projected_revenue:          list[float]
+    projected_ebit:             list[float]
+    projected_ebiat:            list[float]
+    projected_da:               list[float]
+    projected_capex:            list[float]
+    projected_delta_nwc:        list[float]
+    pv_factors:                 list[float]
