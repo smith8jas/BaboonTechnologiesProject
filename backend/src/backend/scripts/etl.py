@@ -219,8 +219,37 @@ def main():
 
 
     # DEBUG
+    # ─────────────────────────────────────────────────────────────
     section("Model dump")
     print(hf.model_dump_json(indent=2))
+
+    # ─────────────────────────────────────────────────────────────
+
+    section("Raw EDGAR — Income Statement concepts (latest period)")
+    raw = company.fetch_all(SPAN)
+    latest_key = sorted(raw["income_statement"].keys())[-1]
+    for concept, value in sorted(raw["income_statement"][latest_key].items()):
+        print(f"  {concept:<60} {value:>20,.0f}")
+
+    # ─────────────────────────────────────────────────────────────
+
+    section("Raw EDGAR — FY2022 IS concepts")
+    fy2022_key = "2022-09-24"
+    for concept, value in sorted(raw["income_statement"][fy2022_key].items()):
+        print(f"  {concept:<60} {value:>20,.0f}")
+
+    # ─────────────────────────────────────────────────────────────
+
+    from edgar import Company
+
+    facts = Company("AAPL").get_facts()
+    df = facts.to_dataframe()
+    interest = df[df['concept'].str.contains('InterestExpense|InterestAndDebt|InterestPaid', case=False)]
+    recent_annual = interest[
+        (interest['period_end'] >= date(2023, 1, 1)) &
+        (interest['fiscal_period'] == 'FY')
+    ]
+    print(recent_annual[['concept', 'numeric_value', 'period_end', 'fiscal_period']])
 
 # Helper formatting functions -- IGNORE
 
