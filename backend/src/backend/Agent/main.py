@@ -34,6 +34,7 @@ def chatbot(agent):
         activate_agent(user_input, agent, message_history)
 
         print("    ")
+        print("Message history for current session")
         print(message_history)
         print("   ")
 

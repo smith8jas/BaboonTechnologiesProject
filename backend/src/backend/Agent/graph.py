@@ -9,7 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .prompts import app_context, plan_prompt, react_prompt, router_prompt
+from .prompts import app_context, plan_prompt, response_prompt, router_prompt
 from .state import CHAT_MODEL, AgentState
 from .tools import tools
 
@@ -26,7 +26,7 @@ def initialize_agent(save_graph=False):
         "tools",
         ToolNode(tools, name="tools", handle_tool_errors=True),
     )
-    agent_builder.add_node("react_node", react_node)
+    agent_builder.add_node("response_node", response_node)
 
     agent_builder.add_edge(START, "router")
     agent_builder.add_conditional_edges(
@@ -42,15 +42,17 @@ def initialize_agent(save_graph=False):
         tools_condition,
         {
             "tools": "tools",
-            END: END,
+            "__end__": "response_node",
         },
     )
-    agent_builder.add_edge("tools", "react_node")
-    agent_builder.add_edge("react_node", END)
+    agent_builder.add_edge("tools", "plan_node")
+    agent_builder.add_edge("response_node", END)
 
     agent = agent_builder.compile(checkpointer=MemorySaver())
+
+     
     if save_graph:
-        _save_graph_pdf(agent, Path(__file__).with_name("agent_graph.pdf"))
+        _save_graph_mermaid(agent, Path(__file__).with_name("agent_graph.mmd"))
     return agent
 
 
@@ -130,16 +132,16 @@ def plan_node(state: AgentState):
     return {"messages": [plan_message]}
 
 
-def react_node(state: AgentState):
-    print("React Agent Activated")
+def response_node(state: AgentState):
+    print("Response Agent Activated")
     try:
-        react_message = _invoke_llm(state, react_prompt)
+        response_message = _invoke_llm(state, response_prompt)
     except Exception as exc:
-        react_message = AIMessage(
+        response_message = AIMessage(
             content=f"I gathered data but could not complete analysis: {exc}"
         )
 
-    return {"messages": [react_message]}
+    return {"messages": [response_message]}
 
 
 def _route_after_router(state: AgentState) -> str:
@@ -190,17 +192,10 @@ def _print_tool_calls(label: str, message: AIMessage) -> None:
         print(json.dumps(tool_calls, indent=2, default=str))
 
 
-def _save_graph_pdf(agent, output_path: Path) -> None:
-    import matplotlib.image as mpimg
-    import matplotlib.pyplot as plt
-
-    png = agent.get_graph(xray=True).draw_mermaid_png()
-    image = mpimg.imread(BytesIO(png), format="png")
-    fig, ax = plt.subplots(figsize=(11, 8.5))
-    ax.imshow(image)
-    ax.axis("off")
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
-    plt.close(fig)
+def _save_graph_mermaid(agent, output_path: Path) -> None:
+    mermaid_text = agent.get_graph(xray=True).draw_mermaid()
+    output_path.write_text(mermaid_text)
+    print(f"[save_graph] Guardado en: {output_path}")
 
 
 def _serialize_tools():
