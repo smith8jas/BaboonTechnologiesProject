@@ -30,8 +30,8 @@ def chatbot(agent):
             print("Exiting.")
             break
         print(f"You entered: {user_input}")
-
-        result = activate_agent(user_input, agent, message_history)
+        
+        activate_agent(user_input, agent, message_history)
 
         print("    ")
         print(message_history)
