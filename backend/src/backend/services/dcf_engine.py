@@ -13,9 +13,13 @@ def _avg(values: list) -> float | None:
     return sum(clean) / len(clean) if clean else None
 
 
-def build_assumptions(hf: HistoricalFinancials) -> Assumptions: # Can (and should in the near future) accept other classes like 
-                                                                # MarketData, SectorData, even SentimentAnalysis!!!
-                                                                # This is the heart of the DCF engine!
+def build_assumptions(
+    hf: HistoricalFinancials,
+    md: MarketData | None = None,
+    sd: SectorData | None = None,
+) -> Assumptions: # Can (and should in the near future) accept other classes like
+                  # MarketData, SectorData, even SentimentAnalysis!!!
+                  # This is the heart of the DCF engine!
     periods = hf.periods
     rev = [p.income_statement.revenue for p in periods]
 

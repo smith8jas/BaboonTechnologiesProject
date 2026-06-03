@@ -7,11 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.Agent.graph import activate_agent, initialize_agent
 
+DEBUG_SAVE_GRAPH = False
+
 
 # Chatbot. This is where the user enters an input and receives a response.
 def chatbot(agent):
     # Prompt the user in a loop and keep each entry as a string.
-    last_input: str | None = None
     message_history = []
 
     while True:
@@ -28,16 +29,16 @@ def chatbot(agent):
         if user_input.lower() in {"exit", "quit", "end"}:
             print("Exiting.")
             break
-        user_input
         print(f"You entered: {user_input}")
 
-        activate_agent(user_input, agent, message_history)
+        result = activate_agent(user_input, agent, message_history)
 
-
-    return True
+        print("    ")
+        print(message_history)
+        print("   ")
 
 if __name__ == "__main__":
     
-    agent = initialize_agent()
+    agent = initialize_agent(save_graph=DEBUG_SAVE_GRAPH)
 
     chatbot(agent)

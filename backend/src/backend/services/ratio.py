@@ -2,11 +2,8 @@
 
 from typing import List, Dict
 
-from langchain_core.tools import tool
-
 from backend.processing.schema import HistoricalFinancials
 from backend.services.financials import get_financials
-from backend.services.tool_metadata import agent_tool
 import json
 
 
@@ -128,7 +125,6 @@ def net_margin(
     ]
 
 
-@tool
 def get_liquidity_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str, float | None]]:
     """Calculate liquidity ratios for historical financial periods."""
 
@@ -169,7 +165,6 @@ def get_liquidity_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str
     }
 
 
-@tool
 def get_solvency_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str, float | None]]:
     """Calculate solvency ratios for historical financial periods."""
 
@@ -211,7 +206,6 @@ def get_solvency_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str,
     }
 
 
-@tool
 def get_profitability_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[str, float | None]]:
     """Calculate profitability ratios for historical financial periods."""
 
@@ -250,31 +244,6 @@ def get_profitability_ratios(financials: HistoricalFinancials) -> Dict[str, Dict
             net_margins
         )
     }
-
-
-ratio_tools = [
-    agent_tool(
-        get_liquidity_ratios,
-        group="ratio",
-        route="ratios",
-        capability="Calculate liquidity ratios for historical financial periods.",
-        requires_financials=True,
-    ),
-    agent_tool(
-        get_solvency_ratios,
-        group="ratio",
-        route="ratios",
-        capability="Calculate solvency ratios for historical financial periods.",
-        requires_financials=True,
-    ),
-    agent_tool(
-        get_profitability_ratios,
-        group="ratio",
-        route="ratios",
-        capability="Calculate profitability ratios for historical financial periods.",
-        requires_financials=True,
-    ),
-]
 
 
 if __name__ == "__main__":
