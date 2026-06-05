@@ -30,10 +30,96 @@ export async function sendChatMessage({ message, threadId }) {
   return payload;
 }
 
+export async function streamChatMessage({
+  message,
+  threadId,
+  onDelta,
+  onDone,
+  onError,
+  onThreadId,
+}) {
+  const response = await fetch(`${API_BASE_URL}/agent/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message,
+      thread_id: threadId,
+    }),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(readError(payload) || `Request failed with ${response.status}`);
+  }
+
+  if (!response.body) {
+    const payload = await sendChatMessage({ message, threadId });
+    onThreadId?.(payload.thread_id);
+    onDelta?.(payload.response || '');
+    onDone?.();
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      readStreamEvent(line, { onDelta, onDone, onError, onThreadId });
+    }
+  }
+
+  buffer += decoder.decode();
+
+  if (buffer.trim()) {
+    readStreamEvent(buffer, { onDelta, onDone, onError, onThreadId });
+  }
+}
+
 function readError(payload) {
   if (typeof payload?.detail === 'string') {
     return payload.detail;
   }
 
   return payload?.detail?.message;
+}
+
+function readStreamEvent(line, handlers) {
+  if (!line.trim()) {
+    return;
+  }
+
+  const event = JSON.parse(line);
+
+  if (event.type === 'thread') {
+    handlers.onThreadId?.(event.thread_id);
+    return;
+  }
+
+  if (event.type === 'delta') {
+    handlers.onDelta?.(event.content ?? '');
+    return;
+  }
+
+  if (event.type === 'error') {
+    const error = new Error(event.message || 'The stream ended with an error.');
+    handlers.onError?.(error);
+    throw error;
+  }
+
+  if (event.type === 'done') {
+    handlers.onDone?.();
+  }
 }

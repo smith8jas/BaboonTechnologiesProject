@@ -24,6 +24,7 @@ export default function ChatPage({
 }) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
+  const hasStreamingMessage = messages.some((message) => message.isStreaming);
 
   function toggleSidebar() {
     if (window.matchMedia('(max-width: 820px)').matches) {
@@ -110,7 +111,7 @@ export default function ChatPage({
               <MessageBubble key={message.id} message={message} />
             ))}
 
-            {isSending && (
+            {isSending && !hasStreamingMessage && (
               <div className="message-row assistant-row">
                 <div className="bubble assistant-bubble typing-bubble">
                   <span />

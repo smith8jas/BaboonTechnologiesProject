@@ -1,6 +1,8 @@
+import json
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Path, Query, status
+from fastapi.responses import StreamingResponse
 
 from backend.api.controllers import agent as agent_controller
 from backend.api.controllers import companies as company_controller
@@ -107,6 +109,29 @@ def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
     return _call_controller(agent_controller.chat_with_agent, request)
 
 
+@agent_router.post("/chat/stream")
+def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse:
+    thread_id, stream = _call_controller(agent_controller.stream_chat_with_agent, request)
+
+    def event_stream():
+        yield _stream_event({"type": "thread", "thread_id": thread_id})
+
+        try:
+            for chunk in stream:
+                yield _stream_event({"type": "delta", "content": chunk})
+            yield _stream_event({"type": "done"})
+        except Exception as exc:
+            yield _stream_event(
+                {
+                    "type": "error",
+                    "message": str(exc),
+                    "error_type": exc.__class__.__name__,
+                }
+            )
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
 def _call_controller(controller: Callable[..., Any], *args: Any) -> Any:
     try:
         return controller(*args)
@@ -130,6 +155,10 @@ def _raise_service_error(exc: Exception):
             "error_type": exc.__class__.__name__,
         },
     ) from exc
+
+
+def _stream_event(payload: dict[str, Any]) -> str:
+    return f"{json.dumps(payload, default=str)}\n"
 
 
 router.include_router(companies_router)

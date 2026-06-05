@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { checkHealth, sendChatMessage } from './api/client.js';
+import { checkHealth, streamChatMessage } from './api/client.js';
 import Navbar from './components/Navbar.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import LandingPage from './pages/LandingPage.jsx';
@@ -208,6 +208,14 @@ export default function App() {
       content: text,
       timestamp: new Date().toISOString(),
     };
+    const assistantMessageId = crypto.randomUUID();
+    const assistantMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isStreaming: true,
+    };
 
     setDraft('');
     setIsSending(true);
@@ -216,51 +224,92 @@ export default function App() {
         currentSession.id === sessionId
           ? updateSessionMetadata({
               ...currentSession,
-              messages: [...currentSession.messages, userMessage],
+              messages: [...currentSession.messages, userMessage, assistantMessage],
             })
           : currentSession,
       ),
     );
 
+    let streamedContent = '';
+
     try {
-      const payload = await sendChatMessage({
+      await streamChatMessage({
         message: text,
         threadId: session.threadId,
+        onThreadId: (threadId) => {
+          setSessions((current) =>
+            current.map((currentSession) =>
+              currentSession.id === sessionId
+                ? {
+                    ...currentSession,
+                    threadId,
+                  }
+                : currentSession,
+            ),
+          );
+        },
+        onDelta: (chunk) => {
+          streamedContent += chunk;
+          setSessions((current) =>
+            current.map((currentSession) =>
+              currentSession.id === sessionId
+                ? updateSessionMetadata({
+                    ...currentSession,
+                    messages: currentSession.messages.map((message) =>
+                      message.id === assistantMessageId
+                        ? {
+                            ...message,
+                            content: streamedContent,
+                          }
+                        : message,
+                    ),
+                  })
+                : currentSession,
+            ),
+          );
+        },
       });
-
-      const assistantMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: payload.response || 'I did not receive a response from the analyst agent.',
-        timestamp: new Date().toISOString(),
-      };
 
       setSessions((current) =>
         current.map((currentSession) =>
           currentSession.id === sessionId
             ? updateSessionMetadata({
                 ...currentSession,
-                threadId: payload.thread_id,
-                messages: [...currentSession.messages, assistantMessage],
+                messages: currentSession.messages.map((message) =>
+                  message.id === assistantMessageId
+                    ? {
+                        ...message,
+                        content: streamedContent || 'I did not receive a response from the analyst agent.',
+                        isStreaming: false,
+                        timestamp: new Date().toISOString(),
+                      }
+                    : message,
+                ),
               })
             : currentSession,
         ),
       );
     } catch (error) {
-      const errorMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `I could not reach the backend cleanly. ${error.message}`,
-        timestamp: new Date().toISOString(),
-        tone: 'error',
-      };
+      const content = streamedContent
+        ? `${streamedContent}\n\nStream interrupted: ${error.message}`
+        : `I could not reach the backend cleanly. ${error.message}`;
 
       setSessions((current) =>
         current.map((currentSession) =>
           currentSession.id === sessionId
             ? updateSessionMetadata({
                 ...currentSession,
-                messages: [...currentSession.messages, errorMessage],
+                messages: currentSession.messages.map((message) =>
+                  message.id === assistantMessageId
+                    ? {
+                        ...message,
+                        content,
+                        isStreaming: false,
+                        timestamp: new Date().toISOString(),
+                        tone: streamedContent ? undefined : 'error',
+                      }
+                    : message,
+                ),
               })
             : currentSession,
         ),

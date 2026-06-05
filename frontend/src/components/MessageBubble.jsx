@@ -7,6 +7,7 @@ export default function MessageBubble({ message }) {
   const [copied, setCopied] = React.useState(false);
   const isUser = message.role === 'user';
   const isError = message.tone === 'error';
+  const isStreaming = Boolean(message.isStreaming);
   const isReport = !isUser && !isError && isReportContent(message.content);
   const rowClass = isUser ? 'user-row' : 'assistant-row';
   const bubbleClass = isUser ? 'user-bubble' : isReport ? 'report-bubble' : 'assistant-bubble';
@@ -20,13 +21,19 @@ export default function MessageBubble({ message }) {
   return (
     <div className={`message-row ${rowClass}`}>
       <div className={`bubble ${bubbleClass} ${isError ? 'error-bubble' : ''}`}>
-        {!isUser && !isError && (
+        {!isUser && !isError && message.content && (
           <button className="copy-button" type="button" onClick={copyMessage} title="Copy response">
             {copied ? <Check size={15} /> : <Copy size={15} />}
           </button>
         )}
 
-        {isUser || isError ? (
+        {isStreaming && !message.content ? (
+          <div className="inline-typing" aria-label="Analyst is writing">
+            <span />
+            <span />
+            <span />
+          </div>
+        ) : isUser || isError ? (
           <p className="message-text">{message.content}</p>
         ) : (
           <ReportMarkdown content={message.content} isReport={isReport} />

@@ -58,6 +58,32 @@ def activate_agent(user_input, agent, *, thread_id: str, recursion_limit: int = 
     return result["messages"][-1].content
 
 
+def activate_agent_stream(user_input, agent, *, thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
+    """Stream the final assistant response from the agent graph."""
+    config = _agent_config(thread_id, recursion_limit)
+    emitted_response_tokens = False
+
+    for token, metadata in agent.stream(_initial_state(user_input), config=config, stream_mode="messages"):
+        if metadata.get("langgraph_node") != "response_node":
+            continue
+
+        content = getattr(token, "content", "")
+        if not content:
+            continue
+
+        emitted_response_tokens = True
+        yield content
+
+    if emitted_response_tokens:
+        return
+
+    result = agent.get_state(config).values
+    final_message = result.get("messages", [])[-1] if result.get("messages") else None
+    fallback = getattr(final_message, "content", "")
+    if fallback:
+        yield fallback
+
+
 def _agent_config(thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
     return {
         "recursion_limit": recursion_limit,
