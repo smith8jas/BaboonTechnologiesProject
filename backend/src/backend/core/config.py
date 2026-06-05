@@ -29,7 +29,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_ROOT / ".env",
-        env_file_encoding="utf-8"
+        env_file_encoding="utf-8",
+        extra="ignore"
     )
 
 settings = Settings()

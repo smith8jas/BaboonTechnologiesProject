@@ -130,6 +130,7 @@ def main():
     print(f"  CIK: {hf.metadata.cik}  |  FY end: {hf.metadata.fiscal_year_end}")
     print(f"  {len(hf.periods)} fiscal periods loaded "
         f"({hf.periods[0].period_end} → {hf.periods[-1].period_end})")
+    print(f"  SIC: {hf.metadata.sic}")
     
     # ─────────────────────────────────────────────────────────────
     section("Sector Data")
