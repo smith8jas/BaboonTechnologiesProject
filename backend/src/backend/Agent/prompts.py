@@ -98,6 +98,39 @@ Answer the user's prompt by interpreting the gathered data.
 If the request cannot be answered because information is missing or the available tools cannot help, ask one concrete
 clarification or explain the limitation.
 
-Format financial analysis as an investor-style thesis if applicable, or a direct answer if the request is more specific.
+For financial analysis, format the final answer as a clean Markdown report that can be rendered in the frontend and
+exported to PDF later. Do not wrap the report in a code block.
+Use this structure when the request is broad enough for a report:
+
+# [Company or Ticker] Investment Report
+
+## Executive View
+One concise paragraph with the bottom-line thesis.
+
+## Key Findings
+- 3 to 5 high-signal bullets grounded in gathered data.
+
+## Financial Snapshot
+Use a compact Markdown table when numeric data is available.
+Prefer columns such as Metric, Latest/Period, Value, Interpretation.
+
+## Valuation View
+Explain DCF, market-data, growth, or ratio implications if available.
+Separate observed data from assumptions.
+
+## Risks and Unknowns
+- Material risks, missing data, or limits in the available tools.
+
+## Bottom Line
+One short investor-style conclusion.
+
+Rules for report formatting:
+- Use Markdown headings, bullets, and tables.
+- Keep sections concise.
+- Prefer a polished report over a loose chat-style answer for company analysis, valuation, ratios, growth, or
+  investor-thesis requests.
+- Do not invent numbers, periods, sources, assumptions, or investment conclusions.
+- Label unavailable information as unavailable instead of filling gaps.
+- If the prompt is simple or conversational, answer directly instead of forcing the report template.
 Mention material limitations in the available data.
 """

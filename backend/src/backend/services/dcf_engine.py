@@ -95,7 +95,8 @@ def build_valuation_inputs(hf:HistoricalFinancials, md: MarketData, sd: SectorDa
     tax_rates = [
         p.income_statement.tax_expense / p.income_statement.ebit
         for p in hf.periods
-        # if p.income_statement.tax_expense and p.income_statement.ebit     (implement fallback later)
+        if p.income_statement.tax_expense is not None
+        and p.income_statement.ebit not in (None, 0)
     ]
     tax_rate = sum(tax_rates) / len(tax_rates) if tax_rates else None   # else sd.tax_rates (uncomment once we have 
                                                                         # damodaran tax rates mapped from sic code)

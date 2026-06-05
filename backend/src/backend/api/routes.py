@@ -1,6 +1,21 @@
-from fastapi import APIRouter
+from typing import Any, Callable
+
+from fastapi import APIRouter, HTTPException, Path, Query, status
+
+from backend.api.controllers import agent as agent_controller
+from backend.api.controllers import companies as company_controller
+from backend.api.schemas import (
+    AgentChatRequest,
+    AgentChatResponse,
+    DCFResponse,
+    GrowthResponse,
+    RatiosResponse,
+)
+from backend.processing.schema import HistoricalFinancials, MarketData, SectorData
 
 router = APIRouter()
+companies_router = APIRouter(prefix="/companies", tags=["companies"])
+agent_router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 @router.get("/")
@@ -11,3 +26,111 @@ def read_root() -> dict[str, str]:
 @router.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@companies_router.get(
+    "/{ticker}/financials",
+    response_model=HistoricalFinancials,
+)
+def get_company_financials(
+    ticker: str = Path(..., min_length=1, max_length=10),
+    span: int = Query(default=5, ge=1, le=10),
+) -> HistoricalFinancials:
+    return _call_controller(company_controller.get_company_financials, ticker, span)
+
+
+@companies_router.get(
+    "/{ticker}/market-data",
+    response_model=MarketData,
+)
+def get_company_market_data(
+    ticker: str = Path(..., min_length=1, max_length=10),
+    include_rfr: bool = Query(default=True),
+) -> MarketData:
+    return _call_controller(
+        company_controller.get_company_market_data,
+        ticker,
+        include_rfr,
+    )
+
+
+@companies_router.get(
+    "/{ticker}/ratios",
+    response_model=RatiosResponse,
+)
+def get_company_ratios(
+    ticker: str = Path(..., min_length=1, max_length=10),
+    span: int = Query(default=5, ge=1, le=10),
+) -> RatiosResponse:
+    return _call_controller(company_controller.get_company_ratios, ticker, span)
+
+
+@companies_router.get(
+    "/{ticker}/growth",
+    response_model=GrowthResponse,
+)
+def get_company_growth(
+    ticker: str = Path(..., min_length=1, max_length=10),
+    span: int = Query(default=5, ge=2, le=10),
+) -> GrowthResponse:
+    return _call_controller(company_controller.get_company_growth, ticker, span)
+
+
+@companies_router.get(
+    "/{ticker}/dcf",
+    response_model=DCFResponse,
+)
+def get_company_dcf(
+    ticker: str = Path(..., min_length=1, max_length=10),
+    span: int = Query(default=5, ge=2, le=10),
+    year: int | None = Query(default=None, ge=1900),
+) -> DCFResponse:
+    return _call_controller(company_controller.get_company_dcf, ticker, span, year)
+
+
+@router.get(
+    "/sector-data",
+    response_model=SectorData,
+    tags=["sector"],
+)
+def get_sector_data(
+    year: int | None = Query(default=None, ge=1900),
+) -> SectorData:
+    return _call_controller(company_controller.get_sector_data, year)
+
+
+@agent_router.post(
+    "/chat",
+    response_model=AgentChatResponse,
+)
+def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
+    return _call_controller(agent_controller.chat_with_agent, request)
+
+
+def _call_controller(controller: Callable[..., Any], *args: Any) -> Any:
+    try:
+        return controller(*args)
+    except Exception as exc:
+        _raise_service_error(exc)
+
+
+def _raise_service_error(exc: Exception):
+    if isinstance(exc, HTTPException):
+        raise exc
+
+    status_code = (
+        status.HTTP_400_BAD_REQUEST
+        if isinstance(exc, ValueError)
+        else status.HTTP_502_BAD_GATEWAY
+    )
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "message": str(exc),
+            "error_type": exc.__class__.__name__,
+        },
+    ) from exc
+
+
+router.include_router(companies_router)
+router.include_router(agent_router)
