@@ -12,3 +12,4 @@ class AgentState(TypedDict):
     current_year: int
     available_tools: list[dict[str, Any]]
     router_route: NotRequired[str]
+    plan_status: NotRequired[str]

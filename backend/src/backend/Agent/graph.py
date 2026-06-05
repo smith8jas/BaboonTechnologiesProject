@@ -1,84 +1,56 @@
 import json
-from io import BytesIO
 from datetime import date
-from pathlib import Path
-from uuid import uuid4
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 
-from .prompts import app_context, plan_prompt, response_prompt, router_prompt
+from .prompts import (
+    app_context,
+    plan_prompt,
+    response_prompt,
+    router_prompt,
+)
 from .state import CHAT_MODEL, AgentState
 from .tools import tools
 
 
 DEFAULT_RECURSION_LIMIT = 12
 
-
+#Builds the node graph for the agent and returns the initialized agent
 def initialize_agent(save_graph=False):
     agent_builder = StateGraph(AgentState)
 
     agent_builder.add_node("router", router)
     agent_builder.add_node("plan_node", plan_node)
-    agent_builder.add_node(
-        "tools",
-        ToolNode(tools, name="tools", handle_tool_errors=True),
-    )
+    agent_builder.add_node("tools", ToolNode(tools, name="tools", handle_tool_errors=True),)
     agent_builder.add_node("response_node", response_node)
 
     agent_builder.add_edge(START, "router")
-    agent_builder.add_conditional_edges(
-        "router",
-        _route_after_router,
-        {
-            "plan_node": "plan_node",
-            "end": END,
-        },
-    )
-    agent_builder.add_conditional_edges(
-        "plan_node",
-        tools_condition,
-        {
-            "tools": "tools",
-            "__end__": "response_node",
-        },
-    )
+    agent_builder.add_conditional_edges("router",_route_after_router,{"plan_node": "plan_node","end": END,},)
+    agent_builder.add_conditional_edges("plan_node",_route_after_plan,{"tools": "tools","response_node": "response_node",},)
     agent_builder.add_edge("tools", "plan_node")
     agent_builder.add_edge("response_node", END)
 
     agent = agent_builder.compile(checkpointer=MemorySaver())
 
-     
-    if save_graph:
-        _save_graph_mermaid(agent, Path(__file__).with_name("agent_graph.mmd"))
-    return agent
+    return(agent)
 
+#Receives the user's input, an agent and some additional context. Invokes the agent with all the received info
+def activate_agent(user_input, agent, *, thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT, debug_updates: bool = False,):
+    config = _agent_config(thread_id, recursion_limit)
 
-def activate_agent(
-    user_input,
-    agent,
-    message_history=None,
-    *,
-    thread_id: str | None = None,
-    recursion_limit: int = DEFAULT_RECURSION_LIMIT,
-):
-    previous_message_count = len(message_history or [])
-    thread_id = thread_id or (
-        f"message-history-{id(message_history)}"
-        if message_history is not None
-        else f"session-{uuid4()}"
-    )
-    config = {
-        "recursion_limit": recursion_limit,
-        "configurable": {"thread_id": thread_id},
-    }
+    previous_state = agent.get_state(config)
+    previous_messages = previous_state.values.get("messages", []) if previous_state else []
+    previous_message_count = len(previous_messages)
 
-    result = agent.invoke(_initial_state(user_input), config=config)
-
-    if message_history is not None:
-        message_history[:] = result["messages"]
+    if debug_updates:
+        for update in agent.stream(_initial_state(user_input), config=config, stream_mode="updates"):
+            print(update)
+        result = agent.get_state(config).values
+    else:
+        result = agent.invoke(_initial_state(user_input), config=config)
 
     for message in result["messages"][previous_message_count:]:
         message.pretty_print()
@@ -86,6 +58,13 @@ def activate_agent(
     return result["messages"][-1].content
 
 
+def _agent_config(thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
+    return {
+        "recursion_limit": recursion_limit,
+        "configurable": {"thread_id": thread_id},
+    }
+
+#
 def _initial_state(user_input):
     return {
         "messages": [HumanMessage(content=user_input)],
@@ -96,7 +75,7 @@ def _initial_state(user_input):
 
 
 def router(state: AgentState):
-    print("Router Agent Activated")
+    print("Router Node Activated")
     try:
         router_message = _invoke_llm(state, router_prompt)
     except Exception as exc:
@@ -109,7 +88,7 @@ def router(state: AgentState):
     if route_text == "plan_node":
         return {"router_route": "plan_node"}
 
-    answer = route_text or "How can I help with company valuation or financial analysis?"
+    answer = route_text or "I can help with public-company valuation and financial analysis. What company or ticker would you like to analyze?"
     return {
         "messages": [AIMessage(content=answer)],
         "router_route": "end",
@@ -117,23 +96,27 @@ def router(state: AgentState):
 
 
 def plan_node(state: AgentState):
-    print("Plan Agent Activated")
+    print("Plan Node Activated")
     try:
-        plan_message = _invoke_tool_calling_llm(state, plan_prompt)
+        plan_message = _invoke_llm(state, plan_prompt, use_tools = True)
     except Exception as exc:
-        plan_message = AIMessage(
-            content=(
-                "I could not create a valid tool plan. Please provide the "
-                f"company or ticker and the specific analysis you want. ({exc})"
-            )
-        )
+        return {
+            "messages": [AIMessage(content=f"I could not create a valid tool plan: {exc}")],
+            "plan_status": "ready_to_respond",
+        }
 
     _print_tool_calls("Execution Plan", plan_message)
-    return {"messages": [plan_message]}
+    if getattr(plan_message, "tool_calls", None):
+        return {
+            "messages": [plan_message],
+            "plan_status": "needs_tools",
+        }
+
+    return {"plan_status": "ready_to_respond"}
 
 
 def response_node(state: AgentState):
-    print("Response Agent Activated")
+    print("Response Node Activated")
     try:
         response_message = _invoke_llm(state, response_prompt)
     except Exception as exc:
@@ -148,40 +131,38 @@ def _route_after_router(state: AgentState) -> str:
     return state.get("router_route", "end")
 
 
-def _invoke_tool_calling_llm(
-    state: AgentState,
-    prompt: str,
-) -> AIMessage:
+def _route_after_plan(state: AgentState) -> str:
+    if state.get("plan_status") == "needs_tools":
+        return "tools"
+
+    return "response_node"
+
+
+def _invoke_llm(state: AgentState,prompt: str,use_tools: bool = False) -> AIMessage:
     context = {
         "latest_user_message": _latest_human_message_content(state),
         "current_year": state.get("current_year"),
         "available_tools": state["available_tools"],
     }
-    system_prompt = _system_prompt(prompt, context)
-    return CHAT_MODEL.bind_tools(tools).invoke(
-        [SystemMessage(content=system_prompt)] + state["messages"]
+    system_prompt = _system_prompt(
+        app_context=state.get("context", ""),
+        node_prompt=prompt,
+        runtime_context=context,
     )
+    model = CHAT_MODEL.bind_tools(tools) if use_tools else CHAT_MODEL
+    return model.invoke([SystemMessage(content=system_prompt)] + state["messages"])
 
 
-def _invoke_llm(
-    state: AgentState,
-    prompt: str,
-) -> AIMessage:
-    context = {
-        "latest_user_message": _latest_human_message_content(state),
-        "current_year": state.get("current_year"),
-        "available_tools": state["available_tools"],
-    }
-    system_prompt = _system_prompt(prompt, context)
-    return CHAT_MODEL.invoke([SystemMessage(content=system_prompt)] + state["messages"])
-
-
-def _system_prompt(prompt: str, context: dict) -> str:
+def _system_prompt(app_context: str, node_prompt: str, runtime_context: dict) -> str:
     return f"""
-    {prompt}
+    Universal agent instructions:
+    {app_context}
+
+    Node instructions:
+    {node_prompt}
 
     Runtime context:
-    {json.dumps(context, indent=2, default=str)}
+    {json.dumps(runtime_context, indent=2, default=str)}
     """
 
 
@@ -190,12 +171,6 @@ def _print_tool_calls(label: str, message: AIMessage) -> None:
     if tool_calls:
         print(f"{label}:")
         print(json.dumps(tool_calls, indent=2, default=str))
-
-
-def _save_graph_mermaid(agent, output_path: Path) -> None:
-    mermaid_text = agent.get_graph(xray=True).draw_mermaid()
-    output_path.write_text(mermaid_text)
-    print(f"[save_graph] Guardado en: {output_path}")
 
 
 def _serialize_tools():
