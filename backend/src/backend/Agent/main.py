@@ -7,13 +7,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.Agent.graph import activate_agent, initialize_agent
 
+from uuid import uuid4
+
 DEBUG_SAVE_GRAPH = False
+DEBUG_NODE_UPDATES = True
+DEBUG_AGENT_STATE = True
 
 
 # Chatbot. This is where the user enters an input and receives a response.
 def chatbot(agent):
     # Prompt the user in a loop and keep each entry as a string.
-    message_history = []
+    thread_id = f"cli-session-{uuid4()}"
 
     while True:
         try:
@@ -26,17 +30,38 @@ def chatbot(agent):
             break
 
         # Chatbot starts here. The lines above only handle exit conditions.
-        if user_input.lower() in {"exit", "quit", "end"}:
+        if user_input.lower() == "exit":
             print("Exiting.")
             break
         print(f"You entered: {user_input}")
         
-        activate_agent(user_input, agent, message_history)
+        response = activate_agent(user_input, agent, thread_id=thread_id, debug_updates=DEBUG_NODE_UPDATES,
+        )
 
-        print("    ")
-        print("Message history for current session")
-        print(message_history)
-        print("   ")
+        print("  ")
+        print("Agent response to user:  ")
+        print(response)
+        print("  ")
+
+        if DEBUG_AGENT_STATE:
+            print_agent_state(agent, thread_id)
+
+        print("  ")
+
+#Prints agent state
+def print_agent_state(agent, thread_id):
+      config = {
+          "configurable": {"thread_id": thread_id},
+      }
+      state = agent.get_state(config)
+      messages = state.values.get("messages", [])
+
+      print("\nCurrent checkpointed messages:")
+      print("  ")
+      for i, message in enumerate(messages, 1):
+          role = message.type
+          content = getattr(message, "content", "")
+          print(f"{i}. {role}: {content[:300]}")
 
 if __name__ == "__main__":
     
