@@ -109,6 +109,16 @@ def get_profitability_ratios(
 
 
 @tool
+def get_efficiency_ratios(
+    ticker: str,
+    span: int = 5,
+) -> Dict[str, Dict[str, float | None]]:
+    """Calculate working capital efficiency ratios for a ticker's historical periods."""
+    hf = financials.get_financials(ticker, span)
+    return ratio.get_efficiency_ratios(hf)
+
+
+@tool
 def run_dcf_valuation(
     ticker: str,
     span: int = 5,
@@ -188,6 +198,13 @@ ratio_tools = [
         group="ratio",
         route="ratios",
         capability="Calculate profitability ratios for historical financial periods.",
+        requires_financials=True,
+    ),
+    agent_tool(
+        get_efficiency_ratios,
+        group="ratio",
+        route="ratios",
+        capability="Calculate working capital efficiency ratios, including DSO, DIO, and DPO, for historical financial periods.",
         requires_financials=True,
     ),
 ]

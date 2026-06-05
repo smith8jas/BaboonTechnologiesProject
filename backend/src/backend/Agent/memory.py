@@ -6,6 +6,7 @@ Repeat for many entities, each entity with many metrics, each metric with many d
 raw_data: dict[Entidad,
                 dict[Metricas, 
                      dict[date, float]]] = {}
+
 calculated_data: dict[str, dict[str, dict[date, float]]] = {}
 
 """Function to update numeric data ...

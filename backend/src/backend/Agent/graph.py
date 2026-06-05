@@ -19,7 +19,7 @@ from .tools import tools
 DEFAULT_RECURSION_LIMIT = 12
 
 #Builds the node graph for the agent and returns the initialized agent
-def initialize_agent(save_graph=False):
+def initialize_agent():
     agent_builder = StateGraph(AgentState)
 
     agent_builder.add_node("router", router)

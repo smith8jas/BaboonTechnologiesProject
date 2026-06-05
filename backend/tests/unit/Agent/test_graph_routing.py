@@ -82,8 +82,9 @@ def test_response_node_does_not_emit_tool_calls(monkeypatch):
 
 def test_router_prompt_mentions_greetings():
     prompt = graph.router_prompt.lower()
-    assert "valuation or closely related financial analysis" in prompt
-    assert "capabilities and limitations" in prompt
+    assert "entry, safety, and routing node" in prompt
+    assert "return exactly" in prompt
+    assert "multi-step financial plans" in prompt
     assert "plan_node" in prompt
 
 
