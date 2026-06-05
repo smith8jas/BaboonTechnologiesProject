@@ -1,13 +1,22 @@
 """Unit tests for liquidity and solvency ratio calculations."""
 
-import math
-import pytest
+from datetime import date
 
 from backend.services.ratio import (
     current_ratio,
     quick_ratio,
     debt_to_equity,
     interest_coverage,
+    get_efficiency_ratios,
+)
+from backend.processing.schema import (
+    BalanceSheet,
+    CashFlowStatement,
+    CompanyMetadata,
+    FinancialPeriod,
+    HistoricalFinancials,
+    IncomeStatement,
+    PerShare,
 )
 
 
@@ -111,3 +120,39 @@ class TestZipTruncation:
 
     def test_debt_to_equity_mismatched_lengths(self):
         assert debt_to_equity([100.0], [50.0, 25.0]) == [2.0]
+
+
+class TestEfficiencyRatios:
+    def test_uses_cogs_field_from_income_statement(self):
+        financials = HistoricalFinancials(
+            ticker="TEST",
+            metadata=CompanyMetadata(
+                cik="0000000000",
+                name="Test Company",
+                fiscal_year_end="1231",
+            ),
+            periods=[
+                FinancialPeriod(
+                    period_end=date(2025, 12, 31),
+                    income_statement=IncomeStatement(
+                        revenue=1000.0,
+                        cogs=400.0,
+                    ),
+                    balance_sheet=BalanceSheet(
+                        accounts_receivable=100.0,
+                        inventory=80.0,
+                        accounts_payable=40.0,
+                    ),
+                    cash_flow=CashFlowStatement(),
+                    per_share=PerShare(),
+                )
+            ],
+        )
+
+        assert get_efficiency_ratios(financials) == {
+            "FY2025": {
+                "dso": 36.5,
+                "dio": 73.0,
+                "dpo": 36.5,
+            }
+        }

@@ -9,7 +9,6 @@ from backend.Agent.graph import activate_agent, initialize_agent
 
 from uuid import uuid4
 
-DEBUG_SAVE_GRAPH = False
 DEBUG_NODE_UPDATES = True
 DEBUG_AGENT_STATE = True
 
@@ -65,6 +64,6 @@ def print_agent_state(agent, thread_id):
 
 if __name__ == "__main__":
     
-    agent = initialize_agent(save_graph=DEBUG_SAVE_GRAPH)
+    agent = initialize_agent()
 
     chatbot(agent)

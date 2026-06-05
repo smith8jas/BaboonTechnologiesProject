@@ -273,7 +273,7 @@ def get_efficiency_ratios(financials: HistoricalFinancials) -> Dict[str, Dict[st
     inventory = [f.balance_sheet.inventory for f in financials.periods]
     payables = [f.balance_sheet.accounts_payable for f in financials.periods]
     revenue = [f.income_statement.revenue for f in financials.periods]
-    cogs = [f.income_statement.cost_of_revenue for f in financials.periods]
+    cogs = [f.income_statement.cogs for f in financials.periods]
 
     dso_values = dso(
         receivables,
