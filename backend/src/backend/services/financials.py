@@ -1,6 +1,8 @@
 """Service layer: pull, normalize, and validate financial data."""
 
+from collections import OrderedDict
 from datetime import date
+from threading import Lock
 
 from backend.adapters.edgar import Edgar
 from backend.adapters.yahoo_finance import fetch_yahoo_market
@@ -24,6 +26,11 @@ from backend.processing.schema import (
     FinancialPeriod,
     HistoricalFinancials,
 )
+
+_FINANCIALS_CACHE_MAXSIZE = 128
+_financials_cache: OrderedDict[tuple[str, int], HistoricalFinancials] = OrderedDict()
+_financials_cache_lock = Lock()
+_financials_key_locks: dict[tuple[str, int], Lock] = {}
 
 
 def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
@@ -66,6 +73,36 @@ def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
         metadata=CompanyMetadata(**raw_metadata),
         periods=periods,
     )
+
+
+def get_cached_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
+    """Return historical financials from an in-process cache when available."""
+    key = (ticker.strip().upper(), int(span))
+
+    with _financials_cache_lock:
+        cached = _financials_cache.get(key)
+        if cached is not None:
+            _financials_cache.move_to_end(key)
+            return cached
+
+        key_lock = _financials_key_locks.setdefault(key, Lock())
+
+    with key_lock:
+        with _financials_cache_lock:
+            cached = _financials_cache.get(key)
+            if cached is not None:
+                _financials_cache.move_to_end(key)
+                return cached
+
+        result = get_financials(key[0], key[1])
+
+        with _financials_cache_lock:
+            _financials_cache[key] = result
+            _financials_cache.move_to_end(key)
+            while len(_financials_cache) > _FINANCIALS_CACHE_MAXSIZE:
+                _financials_cache.popitem(last=False)
+
+        return result
 
 
 def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:

@@ -2,8 +2,8 @@ from backend.api.schemas import AgentChatRequest, AgentChatResponse
 from backend.services import agent_service
 
 
-def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
-    thread_id, response = agent_service.chat(
+async def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
+    thread_id, response = await agent_service.chat_async(
         request.message,
         thread_id=request.thread_id,
         recursion_limit=request.recursion_limit,
@@ -11,8 +11,8 @@ def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
     return AgentChatResponse(thread_id=thread_id, response=response)
 
 
-def stream_chat_with_agent(request: AgentChatRequest):
-    return agent_service.chat_stream(
+async def stream_chat_with_agent(request: AgentChatRequest):
+    return await agent_service.chat_stream_async(
         request.message,
         thread_id=request.thread_id,
         recursion_limit=request.recursion_limit,
