@@ -1201,6 +1201,49 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.thought-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(226, 236, 247, 0.03);
+}
+
+.thought-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.thought-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.thought-step-active .thought-dot {
+  background: var(--amber);
+  animation: thoughtPulse 1.2s ease-in-out infinite;
+}
+
+.thought-step-active {
+  color: var(--muted);
+}
+
+@keyframes thoughtPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 .typing-bubble {
   width: 82px;
   height: 44px;

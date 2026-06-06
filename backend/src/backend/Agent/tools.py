@@ -1,50 +1,86 @@
 """LangChain tools exposed to the agent graph."""
 
-from typing import Dict
+import logging
+from typing import Annotated, Dict
 from datetime import date
 
-from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolArg, tool
 
 from backend.processing.schema import DCFOutput, HistoricalFinancials, MarketData, SectorData
-from backend.services import dcf_engine, financials, growth, ratio
+from .cache import (
+    get_or_calculate_dcf,
+    get_or_calculate_growth,
+    get_or_calculate_ratios,
+    get_or_fetch_financials,
+    get_or_fetch_market_data,
+    get_or_fetch_sector_data,
+    empty_data_cache,
+)
+from .cache_schema import (
+    PHASE_CALCULATION,
+    PHASE_RESEARCH,
+    SUBDOMAIN_BALANCE_SHEET,
+    SUBDOMAIN_EFFICIENCY,
+    SUBDOMAIN_INCOME_STATEMENT,
+    SUBDOMAIN_LIQUIDITY,
+    SUBDOMAIN_PROFITABILITY,
+    SUBDOMAIN_SOLVENCY,
+    ToolSpec,
+)
+
+logger = logging.getLogger(__name__)
 
 
-def agent_tool(
-    tool,
-    *,
-    group: str,
-    route: str,
-    capability: str,
-    requires_financials: bool = False,
-):
-    metadata = dict(getattr(tool, "metadata", None) or {})
-    metadata["agent"] = {
-        "group": group,
-        "route": route,
-        "capability": capability,
-        "requires_financials": requires_financials,
-    }
-    tool.metadata = metadata
-    return tool
+def _tool_cache(data_cache: dict | None) -> dict:
+    return data_cache if data_cache is not None else empty_data_cache()
+
+
+def apply_tool_spec(spec: ToolSpec):
+    metadata = dict(getattr(spec.tool, "metadata", None) or {})
+    metadata["agent"] = spec.metadata
+    spec.tool.metadata = metadata
+    return spec.tool
+
+
+def _log_cache_status(tool_name: str, was_cached: bool, **kwargs) -> None:
+    details = ", ".join(f"{key}={value}" for key, value in kwargs.items() if value is not None)
+    source = "cache" if was_cached else "external"
+    logger.info("%s: data from %s%s", tool_name, source, f" ({details})" if details else "")
 
 
 @tool
-def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
+def get_financials(
+    ticker: str,
+    span: int = 5,
+    fiscal_years: list[int] | None = None,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
     """
     Pull, normalize, and validate historical financials for a ticker.
 
     Args:
         ticker: Stock ticker symbol (e.g. "AAPL").
-        span: Number of annual fiscal periods (10-K filings) to retrieve.
+        span: Number of latest annual fiscal periods (10-K filings) to retrieve. Ignored when
+              fiscal_years is provided (span is then computed from the requested years).
+        fiscal_years: Explicit list of fiscal years to retrieve (e.g. [2021, 2022]). When given,
+                      only those years are returned and the cache is checked by year instead of span.
 
     Returns:
-        HistoricalFinancials with metadata and per-period statements.
+        {"source": "cache" | "external", "data": HistoricalFinancials payload}
     """
-    return financials.get_cached_financials(ticker, span)
+    result, was_cached = get_or_fetch_financials(
+        _tool_cache(data_cache), ticker, int(span), fiscal_years
+    )
+    _log_cache_status("get_financials", was_cached, ticker=ticker, span=span, fiscal_years=fiscal_years)
+    return {"source": "cache" if was_cached else "external", "data": result.model_dump(mode="json")}
 
 
 @tool
-def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
+def get_market_data(
+    ticker: str,
+    include_rfr: bool = True,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
     """
     Pull market data (price, beta, shares, market cap) and optional risk-free rate.
 
@@ -53,69 +89,124 @@ def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
         include_rfr: If True, fetch FRED DGS10 risk-free rate.
 
     Returns:
-        MarketData with current market values.
+        {"source": "cache" | "external", "data": MarketData payload}
     """
-    return financials.get_market_data(ticker, include_rfr)
+    result, was_cached = get_or_fetch_market_data(_tool_cache(data_cache), ticker, include_rfr)
+    _log_cache_status("get_market_data", was_cached, ticker=ticker, include_rfr=include_rfr)
+    return {"source": "cache" if was_cached else "external", "data": result.model_dump(mode="json")}
 
 
 @tool
-def get_sector_data(year) -> SectorData:
+def get_sector_data(
+    year,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
     """Pull sector-level financial assumptions for a given year."""
-    return financials.get_sector_data(year)
+    result, was_cached = get_or_fetch_sector_data(_tool_cache(data_cache), year)
+    _log_cache_status("get_sector_data", was_cached, year=year)
+    return {"source": "cache" if was_cached else "external", "data": result.model_dump(mode="json")}
 
 
 @tool
-def get_income_statement_growth_rates(ticker: str, span: int = 5) -> dict:
-    """Calculate year-over-year income statement growth rates for a ticker."""
-    hf = financials.get_cached_financials(ticker, span)
-    return growth.get_income_statement_growth_rates(hf)
+def get_income_statement_growth_rates(
+    ticker: str,
+    span: int = 5,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """Calculate year-over-year income statement growth rates across the latest span fiscal periods."""
+    result, was_cached = get_or_calculate_growth(
+        _tool_cache(data_cache),
+        ticker,
+        int(span),
+        SUBDOMAIN_INCOME_STATEMENT,
+    )
+    _log_cache_status("get_income_statement_growth_rates", was_cached, ticker=ticker, span=span)
+    return {"source": "cache" if was_cached else "external", "data": result}
 
 
 @tool
-def get_balance_sheet_growth_rates(ticker: str, span: int = 5) -> dict:
-    """Calculate year-over-year balance sheet growth rates for a ticker."""
-    hf = financials.get_cached_financials(ticker, span)
-    return growth.get_balance_sheet_growth_rates(hf)
+def get_balance_sheet_growth_rates(
+    ticker: str,
+    span: int = 5,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """Calculate year-over-year balance sheet growth rates across the latest span fiscal periods."""
+    result, was_cached = get_or_calculate_growth(
+        _tool_cache(data_cache),
+        ticker,
+        int(span),
+        SUBDOMAIN_BALANCE_SHEET,
+    )
+    _log_cache_status("get_balance_sheet_growth_rates", was_cached, ticker=ticker, span=span)
+    return {"source": "cache" if was_cached else "external", "data": result}
 
 
 @tool
 def get_liquidity_ratios(
     ticker: str,
     span: int = 5,
-) -> Dict[str, Dict[str, float | None]]:
-    """Calculate liquidity ratios for a ticker's historical financial periods."""
-    hf = financials.get_cached_financials(ticker, span)
-    return ratio.get_liquidity_ratios(hf)
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """Calculate liquidity ratios across the latest span fiscal periods."""
+    result, was_cached = get_or_calculate_ratios(
+        _tool_cache(data_cache),
+        ticker,
+        int(span),
+        SUBDOMAIN_LIQUIDITY,
+    )
+    _log_cache_status("get_liquidity_ratios", was_cached, ticker=ticker, span=span)
+    return {"source": "cache" if was_cached else "external", "data": result}
 
 
 @tool
 def get_solvency_ratios(
     ticker: str,
     span: int = 5,
-) -> Dict[str, Dict[str, float | None]]:
-    """Calculate solvency ratios for a ticker's historical financial periods."""
-    hf = financials.get_cached_financials(ticker, span)
-    return ratio.get_solvency_ratios(hf)
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """Calculate solvency ratios across the latest span fiscal periods."""
+    result, was_cached = get_or_calculate_ratios(
+        _tool_cache(data_cache),
+        ticker,
+        int(span),
+        SUBDOMAIN_SOLVENCY,
+    )
+    _log_cache_status("get_solvency_ratios", was_cached, ticker=ticker, span=span)
+    return {"source": "cache" if was_cached else "external", "data": result}
 
 
 @tool
 def get_profitability_ratios(
     ticker: str,
     span: int = 5,
-) -> Dict[str, Dict[str, float | None]]:
-    """Calculate profitability ratios for a ticker's historical financial periods."""
-    hf = financials.get_cached_financials(ticker, span)
-    return ratio.get_profitability_ratios(hf)
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """Calculate profitability ratios across the latest span fiscal periods."""
+    result, was_cached = get_or_calculate_ratios(
+        _tool_cache(data_cache),
+        ticker,
+        int(span),
+        SUBDOMAIN_PROFITABILITY,
+    )
+    _log_cache_status("get_profitability_ratios", was_cached, ticker=ticker, span=span)
+    return {"source": "cache" if was_cached else "external", "data": result}
 
 
 @tool
 def get_efficiency_ratios(
     ticker: str,
     span: int = 5,
-) -> Dict[str, Dict[str, float | None]]:
-    """Calculate working capital efficiency ratios for a ticker's historical periods."""
-    hf = financials.get_cached_financials(ticker, span)
-    return ratio.get_efficiency_ratios(hf)
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """Calculate working capital efficiency ratios across the latest span fiscal periods."""
+    result, was_cached = get_or_calculate_ratios(
+        _tool_cache(data_cache),
+        ticker,
+        int(span),
+        SUBDOMAIN_EFFICIENCY,
+    )
+    _log_cache_status("get_efficiency_ratios", was_cached, ticker=ticker, span=span)
+    return {"source": "cache" if was_cached else "external", "data": result}
 
 
 @tool
@@ -123,107 +214,89 @@ def run_dcf_valuation(
     ticker: str,
     span: int = 5,
     year: int | None = None,
-) -> DCFOutput:
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
     """Run a full DCF valuation for a public company ticker."""
     year = year or date.today().year
-    hf = financials.get_cached_financials(ticker, span)
-    md = financials.get_market_data(ticker)
-    sd = financials.get_sector_data(year)
-    assumptions = dcf_engine.build_assumptions(hf, md, sd)
-    valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd)
-    return dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
+    result, was_cached = get_or_calculate_dcf(_tool_cache(data_cache), ticker, int(span), int(year))
+    _log_cache_status("run_dcf_valuation", was_cached, ticker=ticker, span=span, year=year)
+    return {
+        "source": "cache" if was_cached else "external",
+        "data": DCFOutput.model_validate(result).model_dump(mode="json"),
+    }
 
 
-financial_tools = [
-    agent_tool(
-        get_financials,
+TOOL_SPECS = [
+    ToolSpec(
+        tool=get_financials,
         group="financial_statement",
         route="financials",
-        capability="Pull historical company financial statements by ticker and fiscal-period span.",
+        capability="Pull historical company financial statements by ticker for the latest fiscal-period span.",
+        phase=PHASE_RESEARCH,
     ),
-]
-
-market_data_tools = [
-    agent_tool(
-        get_market_data,
+    ToolSpec(
+        tool=get_market_data,
         group="market_data",
         route="market_data",
         capability="Pull current market data such as price, beta, shares, market cap, and optional risk-free rate.",
+        phase=PHASE_RESEARCH,
     ),
-]
-
-sector_data_tools = [
-    agent_tool(
-        get_sector_data,
+    ToolSpec(
+        tool=get_sector_data,
         group="sector_data",
         route="sector_data",
         capability="Pull sector-level valuation assumptions for a requested year.",
+        phase=PHASE_RESEARCH,
     ),
-]
-
-growth_tools = [
-    agent_tool(
-        get_income_statement_growth_rates,
+    ToolSpec(
+        tool=get_income_statement_growth_rates,
         group="growth_rate",
         route="growth_rates",
-        capability="Calculate year-over-year growth rates for income statement fields.",
-        requires_financials=True,
+        capability="Calculate year-over-year growth rates for income statement fields over the latest fiscal-period span.",
+        phase=PHASE_CALCULATION,
     ),
-    agent_tool(
-        get_balance_sheet_growth_rates,
+    ToolSpec(
+        tool=get_balance_sheet_growth_rates,
         group="growth_rate",
         route="growth_rates",
-        capability="Calculate year-over-year growth rates for balance sheet fields.",
-        requires_financials=True,
+        capability="Calculate year-over-year growth rates for balance sheet fields over the latest fiscal-period span.",
+        phase=PHASE_CALCULATION,
     ),
-]
-
-ratio_tools = [
-    agent_tool(
-        get_liquidity_ratios,
+    ToolSpec(
+        tool=get_liquidity_ratios,
         group="ratio",
         route="ratios",
-        capability="Calculate liquidity ratios for historical financial periods.",
-        requires_financials=True,
+        capability="Calculate liquidity ratios over the latest fiscal-period span.",
+        phase=PHASE_CALCULATION,
     ),
-    agent_tool(
-        get_solvency_ratios,
+    ToolSpec(
+        tool=get_solvency_ratios,
         group="ratio",
         route="ratios",
-        capability="Calculate solvency ratios for historical financial periods.",
-        requires_financials=True,
+        capability="Calculate solvency ratios over the latest fiscal-period span.",
+        phase=PHASE_CALCULATION,
     ),
-    agent_tool(
-        get_profitability_ratios,
+    ToolSpec(
+        tool=get_profitability_ratios,
         group="ratio",
         route="ratios",
-        capability="Calculate profitability ratios for historical financial periods.",
-        requires_financials=True,
+        capability="Calculate profitability ratios over the latest fiscal-period span.",
+        phase=PHASE_CALCULATION,
     ),
-    agent_tool(
-        get_efficiency_ratios,
+    ToolSpec(
+        tool=get_efficiency_ratios,
         group="ratio",
         route="ratios",
-        capability="Calculate working capital efficiency ratios, including DSO, DIO, and DPO, for historical financial periods.",
-        requires_financials=True,
+        capability="Calculate working capital efficiency ratios, including DSO, DIO, and DPO, over the latest fiscal-period span.",
+        phase=PHASE_CALCULATION,
     ),
-]
-
-dcf_tools = [
-    agent_tool(
-        run_dcf_valuation,
+    ToolSpec(
+        tool=run_dcf_valuation,
         group="dcf",
         route="dcf",
         capability="Run a full DCF valuation by ticker using financials, market data, sector assumptions, derived assumptions, and valuation inputs.",
-        requires_financials=True,
+        phase=PHASE_CALCULATION,
     ),
 ]
 
-tools = [
-    *financial_tools,
-    *market_data_tools,
-    *sector_data_tools,
-    *growth_tools,
-    *ratio_tools,
-    *dcf_tools,
-]
+tools = [apply_tool_spec(spec) for spec in TOOL_SPECS]

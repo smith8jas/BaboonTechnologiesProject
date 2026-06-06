@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backend.agent.graph import activate_agent, initialize_agent
+from backend.Agent.graph import activate_agent, initialize_agent
 
 from uuid import uuid4
 
