@@ -118,8 +118,11 @@ async def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse
         yield _stream_event({"type": "thread", "thread_id": thread_id})
 
         try:
-            async for chunk in stream:
-                yield _stream_event({"type": "delta", "content": chunk})
+            async for event in stream:
+                if event["type"] == "status":
+                    yield _stream_event({"type": "status", "text": event["text"]})
+                elif event["type"] == "token":
+                    yield _stream_event({"type": "delta", "content": event["text"]})
             yield _stream_event({"type": "done"})
         except Exception as exc:
             yield _stream_event(
