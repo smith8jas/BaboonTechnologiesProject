@@ -213,6 +213,7 @@ export default function App() {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
+      statusText: '',
       timestamp: new Date().toISOString(),
       isStreaming: true,
       thoughts: [],
@@ -277,6 +278,7 @@ export default function App() {
                         ? {
                             ...message,
                             content: streamedContent,
+                            statusText: '',
                           }
                         : message,
                     ),

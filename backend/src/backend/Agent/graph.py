@@ -170,16 +170,35 @@ async def activate_agent_stream_async(
     _set_turn_start_step(config, previous_state)
     emitted_response_tokens = False
 
-    async for token, metadata in agent.astream(_initial_state(user_input), config=config, stream_mode="messages"):
-        if metadata.get("langgraph_node") != "response_node":
-            continue
+    async for mode, data in agent.astream(_initial_state(user_input), config=config, stream_mode=["updates", "messages"]):
+        if mode == "updates":
+            plan_update = data.get("plan_node", {})
+            if plan_update.get("plan_status") == "needs_tools":
+                pass_new: set[str] = set()
+                for msg in plan_update.get("messages", []):
+                    for tc in getattr(msg, "tool_calls", None) or []:
+                        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        label = GROUP_LABELS.get(_TOOL_GROUP.get(name))
+                        if label and label not in emitted_labels:
+                            pass_new.add(label)
+                emitted_labels.update(pass_new)
+                for group in _GROUP_PRIORITY:
+                    label = GROUP_LABELS.get(group)
+                    if label in pass_new:
+                        yield {"type": "status", "text": label}
+                        break
 
-        content = getattr(token, "content", "")
-        if not content:
-            continue
-
-        emitted_response_tokens = True
-        yield content
+        elif mode == "messages":
+            token, metadata = data
+            if metadata.get("langgraph_node") != "response_node":
+                continue
+            content = getattr(token, "content", "")
+            if not content:
+                continue
+            if not emitted_response_tokens:
+                yield {"type": "status", "text": "Almost ready…"}
+                emitted_response_tokens = True
+            yield {"type": "token", "text": content}
 
     if emitted_response_tokens:
         return
@@ -188,7 +207,9 @@ async def activate_agent_stream_async(
     final_message = result.get("messages", [])[-1] if result.get("messages") else None
     fallback = getattr(final_message, "content", "")
     if fallback:
-        yield fallback
+        if emitted_labels:
+            yield {"type": "status", "text": "Almost ready…"}
+        yield {"type": "token", "text": fallback}
 
 
 async def activate_agent_stream_events_async(
@@ -341,13 +362,10 @@ async def plan_node(state: AgentState, config: RunnableConfig):
 
     _log_tool_calls("Execution Plan", plan_message)
     if getattr(plan_message, "tool_calls", None):
-        return {
-            "messages": [plan_message],
-            "plan_status": "needs_tools",
-        }
+        return {"messages": [plan_message], "plan_status": "needs_tools"}
 
-    return {"plan_status": "ready_to_respond"}
-
+    if _tool_results_since_last_human(state):
+        return {"plan_status": "ready_to_respond"}
 
 async def tools_node(state: AgentState):
     logger.info("Tools Node Activated")
