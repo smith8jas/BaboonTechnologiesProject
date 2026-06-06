@@ -19,6 +19,38 @@ from .tools import tools
 
 DEFAULT_RECURSION_LIMIT = 12
 
+# Maps tool group names to the human-readable status shown in the chat UI.
+GROUP_LABELS: dict[str, str] = {
+    "financial_statement": "Fetching financial statements…",
+    "market_data": "Fetching market data…",
+    "sector_data": "Fetching sector data…",
+    "growth_rate": "Calculating growth rates…",
+    "ratio": "Calculating ratios…",
+    "dcf": "Running DCF valuation…",
+}
+
+# Priority order for selecting which label to show when a single plan_node pass requests
+# tools from multiple groups (all arrive in the same NDJSON chunk, so only one React
+# re-render occurs — we pick the highest-priority new label to represent that pass).
+_GROUP_PRIORITY: list[str] = [
+    "financial_statement",
+    "market_data",
+    "sector_data",
+    "growth_rate",
+    "ratio",
+    "dcf",
+]
+
+# Tool-name → group lookup built at import time.
+# Handles both nested {"agent": {"group": ...}} and flat {"group": ...} metadata shapes.
+_TOOL_GROUP: dict[str, str] = {}
+for _t in tools:
+    _meta = getattr(_t, "metadata", {}) or {}
+    _agent_meta = _meta.get("agent", _meta)
+    _group = _agent_meta.get("group") if isinstance(_agent_meta, dict) else None
+    if _group:
+        _TOOL_GROUP[_t.name] = _group
+
 #Builds the node graph for the agent and returns the initialized agent
 def initialize_agent():
     agent_builder = StateGraph(AgentState)
@@ -80,20 +112,44 @@ async def activate_agent_async(user_input, agent, *, thread_id: str, recursion_l
 
 
 def activate_agent_stream(user_input, agent, *, thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
-    """Stream the final assistant response from the agent graph."""
+    """Stream typed events: {"type":"status"} during planning, {"type":"token"} from the response node."""
     config = _agent_config(thread_id, recursion_limit)
+    emitted_labels: set[str] = set()
     emitted_response_tokens = False
 
-    for token, metadata in agent.stream(_initial_state(user_input), config=config, stream_mode="messages"):
-        if metadata.get("langgraph_node") != "response_node":
-            continue
+    for mode, data in agent.stream(_initial_state(user_input), config=config, stream_mode=["updates", "messages"]):
+        if mode == "updates":
+            plan_update = data.get("plan_node", {})
+            if plan_update.get("plan_status") == "needs_tools":
+                # Gather every new label requested in this pass.
+                pass_new: set[str] = set()
+                for msg in plan_update.get("messages", []):
+                    for tc in getattr(msg, "tool_calls", None) or []:
+                        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        label = GROUP_LABELS.get(_TOOL_GROUP.get(name))
+                        if label and label not in emitted_labels:
+                            pass_new.add(label)
+                # Mark all new labels as seen, then emit only the highest-priority one.
+                # (Multiple labels in one pass arrive in the same network chunk and would
+                # be batched into a single React render, so one event per pass is correct.)
+                emitted_labels.update(pass_new)
+                for group in _GROUP_PRIORITY:
+                    label = GROUP_LABELS.get(group)
+                    if label in pass_new:
+                        yield {"type": "status", "text": label}
+                        break
 
-        content = getattr(token, "content", "")
-        if not content:
-            continue
-
-        emitted_response_tokens = True
-        yield content
+        elif mode == "messages":
+            token, metadata = data
+            if metadata.get("langgraph_node") != "response_node":
+                continue
+            content = getattr(token, "content", "")
+            if not content:
+                continue
+            if not emitted_response_tokens:
+                yield {"type": "status", "text": "Almost ready…"}
+                emitted_response_tokens = True
+            yield {"type": "token", "text": content}
 
     if emitted_response_tokens:
         return
@@ -102,24 +158,46 @@ def activate_agent_stream(user_input, agent, *, thread_id: str, recursion_limit:
     final_message = result.get("messages", [])[-1] if result.get("messages") else None
     fallback = getattr(final_message, "content", "")
     if fallback:
-        yield fallback
+        if emitted_labels:
+            yield {"type": "status", "text": "Almost ready…"}
+        yield {"type": "token", "text": fallback}
 
 
 async def activate_agent_stream_async(user_input, agent, *, thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
-    """Stream the final assistant response from the agent graph asynchronously."""
+    """Stream typed events asynchronously; mirrors activate_agent_stream exactly."""
     config = _agent_config(thread_id, recursion_limit)
+    emitted_labels: set[str] = set()
     emitted_response_tokens = False
 
-    async for token, metadata in agent.astream(_initial_state(user_input), config=config, stream_mode="messages"):
-        if metadata.get("langgraph_node") != "response_node":
-            continue
+    async for mode, data in agent.astream(_initial_state(user_input), config=config, stream_mode=["updates", "messages"]):
+        if mode == "updates":
+            plan_update = data.get("plan_node", {})
+            if plan_update.get("plan_status") == "needs_tools":
+                pass_new: set[str] = set()
+                for msg in plan_update.get("messages", []):
+                    for tc in getattr(msg, "tool_calls", None) or []:
+                        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        label = GROUP_LABELS.get(_TOOL_GROUP.get(name))
+                        if label and label not in emitted_labels:
+                            pass_new.add(label)
+                emitted_labels.update(pass_new)
+                for group in _GROUP_PRIORITY:
+                    label = GROUP_LABELS.get(group)
+                    if label in pass_new:
+                        yield {"type": "status", "text": label}
+                        break
 
-        content = getattr(token, "content", "")
-        if not content:
-            continue
-
-        emitted_response_tokens = True
-        yield content
+        elif mode == "messages":
+            token, metadata = data
+            if metadata.get("langgraph_node") != "response_node":
+                continue
+            content = getattr(token, "content", "")
+            if not content:
+                continue
+            if not emitted_response_tokens:
+                yield {"type": "status", "text": "Almost ready…"}
+                emitted_response_tokens = True
+            yield {"type": "token", "text": content}
 
     if emitted_response_tokens:
         return
@@ -128,7 +206,9 @@ async def activate_agent_stream_async(user_input, agent, *, thread_id: str, recu
     final_message = result.get("messages", [])[-1] if result.get("messages") else None
     fallback = getattr(final_message, "content", "")
     if fallback:
-        yield fallback
+        if emitted_labels:
+            yield {"type": "status", "text": "Almost ready…"}
+        yield {"type": "token", "text": fallback}
 
 
 def _agent_config(thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
