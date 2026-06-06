@@ -40,7 +40,7 @@ def get_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
     Returns:
         HistoricalFinancials with metadata and per-period statements.
     """
-    return financials.get_financials(ticker, span)
+    return financials.get_cached_financials(ticker, span)
 
 
 @tool
@@ -67,14 +67,14 @@ def get_sector_data(year) -> SectorData:
 @tool
 def get_income_statement_growth_rates(ticker: str, span: int = 5) -> dict:
     """Calculate year-over-year income statement growth rates for a ticker."""
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     return growth.get_income_statement_growth_rates(hf)
 
 
 @tool
 def get_balance_sheet_growth_rates(ticker: str, span: int = 5) -> dict:
     """Calculate year-over-year balance sheet growth rates for a ticker."""
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     return growth.get_balance_sheet_growth_rates(hf)
 
 
@@ -84,7 +84,7 @@ def get_liquidity_ratios(
     span: int = 5,
 ) -> Dict[str, Dict[str, float | None]]:
     """Calculate liquidity ratios for a ticker's historical financial periods."""
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     return ratio.get_liquidity_ratios(hf)
 
 
@@ -94,7 +94,7 @@ def get_solvency_ratios(
     span: int = 5,
 ) -> Dict[str, Dict[str, float | None]]:
     """Calculate solvency ratios for a ticker's historical financial periods."""
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     return ratio.get_solvency_ratios(hf)
 
 
@@ -104,7 +104,7 @@ def get_profitability_ratios(
     span: int = 5,
 ) -> Dict[str, Dict[str, float | None]]:
     """Calculate profitability ratios for a ticker's historical financial periods."""
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     return ratio.get_profitability_ratios(hf)
 
 
@@ -114,7 +114,7 @@ def get_efficiency_ratios(
     span: int = 5,
 ) -> Dict[str, Dict[str, float | None]]:
     """Calculate working capital efficiency ratios for a ticker's historical periods."""
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     return ratio.get_efficiency_ratios(hf)
 
 
@@ -126,7 +126,7 @@ def run_dcf_valuation(
 ) -> DCFOutput:
     """Run a full DCF valuation for a public company ticker."""
     year = year or date.today().year
-    hf = financials.get_financials(ticker, span)
+    hf = financials.get_cached_financials(ticker, span)
     md = financials.get_market_data(ticker)
     sd = financials.get_sector_data(year)
     assumptions = dcf_engine.build_assumptions(hf, md, sd)

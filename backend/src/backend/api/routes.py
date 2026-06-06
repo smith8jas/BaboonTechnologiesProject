@@ -1,3 +1,4 @@
+import inspect
 import json
 from typing import Any, Callable
 
@@ -105,20 +106,23 @@ def get_sector_data(
     "/chat",
     response_model=AgentChatResponse,
 )
-def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
-    return _call_controller(agent_controller.chat_with_agent, request)
+async def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
+    return await _call_controller_async(agent_controller.chat_with_agent, request)
 
 
 @agent_router.post("/chat/stream")
-def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse:
-    thread_id, stream = _call_controller(agent_controller.stream_chat_with_agent, request)
+async def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse:
+    thread_id, stream = await _call_controller_async(agent_controller.stream_chat_with_agent, request)
 
-    def event_stream():
+    async def event_stream():
         yield _stream_event({"type": "thread", "thread_id": thread_id})
 
         try:
-            for chunk in stream:
-                yield _stream_event({"type": "delta", "content": chunk})
+            async for event in stream:
+                if event["type"] == "status":
+                    yield _stream_event({"type": "status", "text": event["text"]})
+                elif event["type"] == "token":
+                    yield _stream_event({"type": "delta", "content": event["text"]})
             yield _stream_event({"type": "done"})
         except Exception as exc:
             yield _stream_event(
@@ -135,6 +139,16 @@ def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse:
 def _call_controller(controller: Callable[..., Any], *args: Any) -> Any:
     try:
         return controller(*args)
+    except Exception as exc:
+        _raise_service_error(exc)
+
+
+async def _call_controller_async(controller: Callable[..., Any], *args: Any) -> Any:
+    try:
+        result = controller(*args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
     except Exception as exc:
         _raise_service_error(exc)
 
