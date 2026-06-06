@@ -1,7 +1,7 @@
 import json
 from datetime import date
 
-from langchain.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -189,30 +189,35 @@ async def arouter(state: AgentState):
     }
 
 
+def _tool_results_since_last_human(state) -> bool:
+    for m in reversed(state.get("messages", [])):
+        if isinstance(m, HumanMessage):
+            return False
+        if isinstance(m, ToolMessage):
+            return True
+    return False
+
 def plan_node(state: AgentState):
-    print("Plan Node Activated")
-    try:
-        plan_message = _invoke_llm(state, plan_prompt, use_tools = True)
-    except Exception as exc:
-        return {
-            "messages": [AIMessage(content=f"I could not create a valid tool plan: {exc}")],
-            "plan_status": "ready_to_respond",
-        }
-
-    _print_tool_calls("Execution Plan", plan_message)
+    plan_message = _invoke_llm(state, plan_prompt, use_tools=True)
     if getattr(plan_message, "tool_calls", None):
-        return {
-            "messages": [plan_message],
-            "plan_status": "needs_tools",
-        }
+        return {"messages": [plan_message], "plan_status": "needs_tools"}
 
-    return {"plan_status": "ready_to_respond"}
+    # No tool calls — only valid if we already gathered data this turn
+    if _tool_results_since_last_human(state):
+        return {"plan_status": "ready_to_respond"}
+
+    # Model produced filler without acting → force it to plan tools
+    forced = _invoke_llm(state, plan_prompt, use_tools=True, force_tools=True)
+    if getattr(forced, "tool_calls", None):
+        return {"messages": [forced], "plan_status": "needs_tools"}
+
+    return {"plan_status": "ready_to_respond"}  # give up gracefully, don't loop
 
 
 async def aplan_node(state: AgentState):
     print("Plan Node Activated")
     try:
-        plan_message = await _ainvoke_llm(state, plan_prompt, use_tools = True)
+        plan_message = await _ainvoke_llm(state, plan_prompt, use_tools=True)
     except Exception as exc:
         return {
             "messages": [AIMessage(content=f"I could not create a valid tool plan: {exc}")],
@@ -221,10 +226,22 @@ async def aplan_node(state: AgentState):
 
     _print_tool_calls("Execution Plan", plan_message)
     if getattr(plan_message, "tool_calls", None):
+        return {"messages": [plan_message], "plan_status": "needs_tools"}
+
+    if _tool_results_since_last_human(state):
+        return {"plan_status": "ready_to_respond"}
+
+    try:
+        forced = await _ainvoke_llm(state, plan_prompt, use_tools=True, force_tools=True)
+    except Exception as exc:
         return {
-            "messages": [plan_message],
-            "plan_status": "needs_tools",
+            "messages": [AIMessage(content=f"I could not create a valid tool plan: {exc}")],
+            "plan_status": "ready_to_respond",
         }
+
+    _print_tool_calls("Forced Execution Plan", forced)
+    if getattr(forced, "tool_calls", None):
+        return {"messages": [forced], "plan_status": "needs_tools"}
 
     return {"plan_status": "ready_to_respond"}
 
@@ -253,6 +270,24 @@ async def aresponse_node(state: AgentState):
     return {"messages": [response_message]}
 
 
+async def _ainvoke_llm(state: AgentState, prompt: str, use_tools: bool = False, force_tools: bool = False) -> AIMessage:
+    context = {
+        "latest_user_message": _latest_human_message_content(state),
+        "current_year": state.get("current_year"),
+        "available_tools": state["available_tools"],
+    }
+    system_prompt = _system_prompt(
+        app_context=state.get("context", ""),
+        node_prompt=prompt,
+        runtime_context=context,
+    )
+    if use_tools:
+        model = CHAT_MODEL.bind_tools(tools, tool_choice="any" if force_tools else "auto")
+    else:
+        model = CHAT_MODEL
+    return await model.ainvoke([SystemMessage(content=system_prompt)] + state["messages"])
+
+
 def _route_after_router(state: AgentState) -> str:
     return state.get("router_route", "end")
 
@@ -264,7 +299,8 @@ def _route_after_plan(state: AgentState) -> str:
     return "response_node"
 
 
-def _invoke_llm(state: AgentState,prompt: str,use_tools: bool = False) -> AIMessage:
+
+def _invoke_llm(state: AgentState, prompt: str, use_tools: bool = False, force_tools: bool = False) -> AIMessage:
     context = {
         "latest_user_message": _latest_human_message_content(state),
         "current_year": state.get("current_year"),
@@ -275,23 +311,11 @@ def _invoke_llm(state: AgentState,prompt: str,use_tools: bool = False) -> AIMess
         node_prompt=prompt,
         runtime_context=context,
     )
-    model = CHAT_MODEL.bind_tools(tools) if use_tools else CHAT_MODEL
+    if use_tools:
+        model = CHAT_MODEL.bind_tools(tools, tool_choice="any" if force_tools else "auto")
+    else:
+        model = CHAT_MODEL
     return model.invoke([SystemMessage(content=system_prompt)] + state["messages"])
-
-
-async def _ainvoke_llm(state: AgentState,prompt: str,use_tools: bool = False) -> AIMessage:
-    context = {
-        "latest_user_message": _latest_human_message_content(state),
-        "current_year": state.get("current_year"),
-        "available_tools": state["available_tools"],
-    }
-    system_prompt = _system_prompt(
-        app_context=state.get("context", ""),
-        node_prompt=prompt,
-        runtime_context=context,
-    )
-    model = CHAT_MODEL.bind_tools(tools) if use_tools else CHAT_MODEL
-    return await model.ainvoke([SystemMessage(content=system_prompt)] + state["messages"])
 
 
 def _system_prompt(app_context: str, node_prompt: str, runtime_context: dict) -> str:
