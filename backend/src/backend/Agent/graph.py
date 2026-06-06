@@ -31,7 +31,7 @@ def initialize_agent():
     agent_builder.add_edge(START, "router")
     agent_builder.add_conditional_edges("router",_route_after_router,{"plan_node": "plan_node","end": END,},)
     agent_builder.add_conditional_edges("plan_node",_route_after_plan,{"tools": "tools","response_node": "response_node",},)
-    agent_builder.add_edge("tools", "response_node")
+    agent_builder.add_edge("tools", "plan_node")
     agent_builder.add_edge("response_node", END)
 
     agent = agent_builder.compile(checkpointer=MemorySaver())

@@ -14,7 +14,7 @@ from backend.agent.graph import initialize_agent
 
 # agent/ -> backend/ -> src/ ; images dir lives at src/images
 IMAGES_DIR = Path(__file__).resolve().parents[2] / "images"
-OUTPUT_PATH = IMAGES_DIR / "agent_graph.png"
+OUTPUT_PATH = IMAGES_DIR / "agent_graph1.png"
 
 
 def export_png() -> Path:
