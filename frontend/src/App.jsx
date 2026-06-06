@@ -213,6 +213,7 @@ export default function App() {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
+      statusText: '',
       timestamp: new Date().toISOString(),
       isStreaming: true,
     };
@@ -248,6 +249,22 @@ export default function App() {
             ),
           );
         },
+        onStatus: (text) => {
+          setSessions((current) =>
+            current.map((currentSession) =>
+              currentSession.id === sessionId
+                ? {
+                    ...currentSession,
+                    messages: currentSession.messages.map((message) =>
+                      message.id === assistantMessageId
+                        ? { ...message, statusText: text }
+                        : message,
+                    ),
+                  }
+                : currentSession,
+            ),
+          );
+        },
         onDelta: (chunk) => {
           streamedContent += chunk;
           setSessions((current) =>
@@ -260,6 +277,7 @@ export default function App() {
                         ? {
                             ...message,
                             content: streamedContent,
+                            statusText: '',
                           }
                         : message,
                     ),
