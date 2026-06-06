@@ -1228,7 +1228,7 @@ button:disabled {
 }
 
 .inline-typing {
-  height: 28px;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1249,6 +1249,26 @@ button:disabled {
 .inline-typing span:nth-child(3) {
   animation-delay: 260ms;
 }
+
+/* Status text rendered inside the loading bubble during agent planning passes */
+.inline-typing .status-label {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  animation: none;
+  font-size: 0.90rem;
+  font-style: italic;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+/* When a status-label is the first child, shift dot delays to keep stagger correct */
+.inline-typing:has(.status-label) span:nth-child(2) { animation-delay: 0ms; }
+.inline-typing:has(.status-label) span:nth-child(3) { animation-delay: 130ms; }
+.inline-typing:has(.status-label) span:nth-child(4) { animation-delay: 260ms; }
 
 .composer-shell {
   position: relative;

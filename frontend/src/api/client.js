@@ -37,6 +37,7 @@ export async function streamChatMessage({
   onDone,
   onError,
   onThreadId,
+  onStatus,
 }) {
   const response = await fetch(`${API_BASE_URL}/agent/chat/stream`, {
     method: 'POST',
@@ -77,7 +78,7 @@ export async function streamChatMessage({
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      readStreamEvent(line, { onDelta, onDone, onError, onThreadId });
+      readStreamEvent(line, { onDelta, onDone, onError, onThreadId, onStatus });
     }
   }
 
@@ -105,6 +106,11 @@ function readStreamEvent(line, handlers) {
 
   if (event.type === 'thread') {
     handlers.onThreadId?.(event.thread_id);
+    return;
+  }
+
+  if (event.type === 'status') {
+    handlers.onStatus?.(event.text);
     return;
   }
 

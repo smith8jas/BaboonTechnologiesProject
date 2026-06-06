@@ -28,7 +28,8 @@ export default function MessageBubble({ message }) {
         )}
 
         {isStreaming && !message.content ? (
-          <div className="inline-typing" aria-label="Analyst is writing">
+          <div className="inline-typing" aria-label={message.statusText || 'Analyst is writing'}>
+            {message.statusText ? <span className="status-label">{message.statusText}</span> : null}
             <span />
             <span />
             <span />
