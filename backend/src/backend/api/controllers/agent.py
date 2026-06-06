@@ -12,7 +12,7 @@ async def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
 
 
 async def stream_chat_with_agent(request: AgentChatRequest):
-    return await agent_service.chat_stream_async(
+    return await agent_service.chat_stream_events_async(
         request.message,
         thread_id=request.thread_id,
         recursion_limit=request.recursion_limit,

@@ -8,6 +8,9 @@ export default function MessageBubble({ message }) {
   const isUser = message.role === 'user';
   const isError = message.tone === 'error';
   const isStreaming = Boolean(message.isStreaming);
+  const thoughts = message.thoughts;
+  const statusText = message.statusText;
+  const hasThoughts = thoughts?.length > 0;
   const isReport = !isUser && !isError && isReportContent(message.content);
   const rowClass = isUser ? 'user-row' : 'assistant-row';
   const bubbleClass = isUser ? 'user-bubble' : isReport ? 'report-bubble' : 'assistant-bubble';
@@ -27,17 +30,34 @@ export default function MessageBubble({ message }) {
           </button>
         )}
 
-        {isStreaming && !message.content ? (
-          <div className="inline-typing" aria-label={message.statusText || 'Analyst is writing'}>
-            {message.statusText ? <span className="status-label">{message.statusText}</span> : null}
-            <span />
-            <span />
-            <span />
-          </div>
-        ) : isUser || isError ? (
+        {isUser || isError ? (
           <p className="message-text">{message.content}</p>
         ) : (
-          <ReportMarkdown content={message.content} isReport={isReport} />
+          <>
+            {hasThoughts && (
+              <div className="thought-steps">
+                {thoughts.map((thought, i) => (
+                  <div
+                    key={i}
+                    className={`thought-step${isStreaming && i === thoughts.length - 1 ? ' thought-step-active' : ''}`}
+                  >
+                    <span className="thought-dot" />
+                    {thought}
+                  </div>
+                ))}
+              </div>
+            )}
+            {message.content ? (
+              <ReportMarkdown content={message.content} isReport={isReport} />
+            ) : isStreaming ? (
+              <div className="inline-typing" aria-label={statusText || 'Analyst is writing'}>
+                {statusText ? <span className="status-label">{statusText}</span> : null}
+                <span />
+                <span />
+                <span />
+              </div>
+            ) : null}
+          </>
         )}
         {message.timestamp && (
           <time dateTime={message.timestamp}>{formatTime(message.timestamp)}</time>

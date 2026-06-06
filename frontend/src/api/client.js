@@ -38,6 +38,7 @@ export async function streamChatMessage({
   onError,
   onThreadId,
   onStatus,
+  onThought,
 }) {
   const response = await fetch(`${API_BASE_URL}/agent/chat/stream`, {
     method: 'POST',
@@ -78,14 +79,14 @@ export async function streamChatMessage({
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      readStreamEvent(line, { onDelta, onDone, onError, onThreadId, onStatus });
+      readStreamEvent(line, { onDelta, onDone, onError, onThreadId, onStatus, onThought });
     }
   }
 
   buffer += decoder.decode();
 
   if (buffer.trim()) {
-    readStreamEvent(buffer, { onDelta, onDone, onError, onThreadId });
+    readStreamEvent(buffer, { onDelta, onDone, onError, onThreadId, onStatus, onThought });
   }
 }
 
@@ -109,13 +110,18 @@ function readStreamEvent(line, handlers) {
     return;
   }
 
-  if (event.type === 'status') {
-    handlers.onStatus?.(event.text);
+  if (event.type === 'thought') {
+    handlers.onThought?.(event.content ?? '');
     return;
   }
 
-  if (event.type === 'delta') {
-    handlers.onDelta?.(event.content ?? '');
+  if (event.type === 'status') {
+    handlers.onStatus?.(event.text ?? event.content ?? '');
+    return;
+  }
+
+  if (event.type === 'delta' || event.type === 'token') {
+    handlers.onDelta?.(event.content ?? event.text ?? '');
     return;
   }
 

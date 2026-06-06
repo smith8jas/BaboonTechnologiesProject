@@ -1,7 +1,7 @@
 """Render the LangGraph agent topology to a PNG.
 
 Usage (from backend/):
-    uv run python -m backend.agent.agent_plot
+    uv run python -m backend.scripts.agent_graph
 
 Output: src/images/agent_graph.png
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.agent.graph import initialize_agent
+from backend.Agent.graph import initialize_agent
 
 # agent/ -> backend/ -> src/ ; images dir lives at src/images
 IMAGES_DIR = Path(__file__).resolve().parents[2] / "images"

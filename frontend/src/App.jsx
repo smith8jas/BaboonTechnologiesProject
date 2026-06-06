@@ -216,6 +216,7 @@ export default function App() {
       statusText: '',
       timestamp: new Date().toISOString(),
       isStreaming: true,
+      thoughts: [],
     };
 
     setDraft('');
@@ -256,8 +257,22 @@ export default function App() {
                 ? {
                     ...currentSession,
                     messages: currentSession.messages.map((message) =>
+                      message.id === assistantMessageId ? { ...message, statusText: text } : message,
+                    ),
+                  }
+                : currentSession,
+            ),
+          );
+        },
+        onThought: (thought) => {
+          setSessions((current) =>
+            current.map((currentSession) =>
+              currentSession.id === sessionId
+                ? {
+                    ...currentSession,
+                    messages: currentSession.messages.map((message) =>
                       message.id === assistantMessageId
-                        ? { ...message, statusText: text }
+                        ? { ...message, thoughts: [...(message.thoughts || []), thought] }
                         : message,
                     ),
                   }
