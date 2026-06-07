@@ -7,6 +7,7 @@ from datetime import date
 from langchain_core.tools import InjectedToolArg, tool
 
 from backend.processing.schema import DCFOutput, HistoricalFinancials, MarketData, SectorData
+from backend.services.scrape import search_and_scrape
 from .cache import (
     get_or_calculate_dcf,
     get_or_calculate_growth,
@@ -210,6 +211,36 @@ def get_efficiency_ratios(
 
 
 @tool
+def scrape_web(
+    topic: str,
+    max_results: int = 3,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """
+    Search the web for recent news, events, or public information on a financial topic.
+    Use for context not available in financial statements: recent earnings announcements,
+    guidance updates, product launches, regulatory events, or analyst commentary.
+    Do not use to retrieve numbers already available through financial statement tools.
+
+    Args:
+        topic: Description of what to search for (e.g. "Apple Q1 2025 earnings guidance").
+        max_results: Number of pages to scrape per search query (default 3).
+
+    Returns:
+        {"source": "web", "data": [{"url", "title", "snippet", "confidence"}, ...]}
+    """
+    results = search_and_scrape(topic, int(max_results))
+    _log_cache_status("scrape_web", False, topic=topic)
+    return {
+        "source": "web",
+        "data": [
+            {"url": r.url, "title": r.title, "snippet": r.snippet, "confidence": r.confidence}
+            for r in results
+        ],
+    }
+
+
+@tool
 def run_dcf_valuation(
     ticker: str,
     span: int = 5,
@@ -296,6 +327,13 @@ TOOL_SPECS = [
         route="dcf",
         capability="Run a full DCF valuation by ticker; this composite tool already gets or reuses financials, market data, sector data, derived assumptions, and valuation inputs.",
         phase=PHASE_CALCULATION,
+    ),
+    ToolSpec(
+        tool=scrape_web,
+        group="web_scrape",
+        route="scrape",
+        capability="Search the web and scrape recent news, events, or qualitative context on a financial topic. Use for information not available in structured financial statements.",
+        phase=PHASE_RESEARCH,
     ),
 ]
 

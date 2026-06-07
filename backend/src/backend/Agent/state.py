@@ -32,3 +32,4 @@ class AgentState(TypedDict):
     forced_response_due_to_recursion: NotRequired[bool]
     data_cache: NotRequired[Annotated[dict[str, Any], merge_cache]]
     data_catalog: NotRequired[dict[str, Any]]
+    scrape_history: NotRequired[Annotated[list[dict[str, Any]], operator.add]]

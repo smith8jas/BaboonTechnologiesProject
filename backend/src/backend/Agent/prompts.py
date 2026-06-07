@@ -205,6 +205,10 @@ Complete Company Analysis:
 Company Comparison:
 Gather equivalent data for every company mentioned.
 
+Recent News / Web Research:
+→ scrape_web (for recent events, news, earnings announcements, or analyst commentary not available in financial statements)
+Note: scrape_web is supplementary. Use it when the user needs recent context that structured financial data cannot provide (e.g., recent guidance, product launches, regulatory events, macro commentary). Do not use it to fetch numbers already available through financial statement tools.
+
 Decision Framework:
 
 Before responding, ask:
@@ -214,9 +218,13 @@ Before responding, ask:
 - Do I have enough growth data?
 - Do I have enough ratio data?
 - Do I have enough valuation data?
+- Is recent qualitative context needed (news, events, announcements)?
 
 If additional information is needed:
 → call tools.
+
+If recent web context is needed:
+→ call scrape_web with a clear topic description. Do not mix scrape_web with other tool calls in the same plan step.
 
 If sufficient information already exists:
 → respond with no tool calls.
@@ -291,9 +299,33 @@ Rules for report formatting:
 - Keep conclusions evidence-based.
 Mention material limitations in the available data.
 
+When scrape_history is present in runtime_context:
+- Treat scraped content as supplementary qualitative context, not as verified financial data.
+- Cite the source URL when referencing scraped information.
+- Clearly label scraped content as "from recent web sources" and note its confidence score when below 0.6.
+- Never mix scraped snippets with structured financial figures as if they were the same quality.
+
 If runtime_context.forced_response_due_to_recursion is true:
 - Answer the user's query using the data already gathered.
 - Clearly state that planning stopped early to avoid the graph recursion limit.
 - Explain that the answer may be incomplete because the agent could not gather every additional data point it might
   otherwise have requested.
+"""
+
+
+scrape_prompt = """
+You are the web search query planner.
+
+You have been given a topic to research on the web. Your job is to generate 2 to 3 specific,
+effective DuckDuckGo search queries that will surface relevant and recent results for that topic.
+
+Guidelines:
+- Be specific: include company names, tickers, time periods, or event names when relevant.
+- Vary the queries: each query should target a different angle or source type.
+- Target recency: add the current year or terms like "latest" or "recent" when the user needs fresh information.
+- Target financial sources: include terms like "earnings", "revenue", "guidance", "SEC filing", or
+  "analyst report" when the topic is financial.
+- Keep each query under 10 words.
+
+Return a JSON object with a single key "queries" containing a list of 2 to 3 query strings.
 """

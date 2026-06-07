@@ -17,11 +17,13 @@ from .cache import (
     state_cache,
     tool_content,
 )
+from backend.services.scrape import search_and_scrape
 from .prompts import (
     app_context,
     plan_prompt,
     response_prompt,
     router_prompt,
+    scrape_prompt,
 )
 from .state import CHAT_MODEL, AgentState, merge_cache
 from .tools import tools
@@ -34,6 +36,13 @@ class RouterDecision(BaseModel):
     answer: str | None = None
 
 
+class ScrapeDecision(BaseModel):
+    queries: list[str]
+
+
+_SCRAPE_TOOL_NAME = "scrape_web"
+_SCRAPE_MIN_CONFIDENCE = 0.3
+
 DEFAULT_RECURSION_LIMIT = 12
 
 GROUP_LABELS: dict[str, str] = {
@@ -43,6 +52,7 @@ GROUP_LABELS: dict[str, str] = {
     "growth_rate": "Calculating growth rates...",
     "ratio": "Calculating ratios...",
     "dcf": "Running DCF valuation...",
+    "web_scrape": "Searching the web...",
 }
 
 _GROUP_PRIORITY: list[str] = [
@@ -52,6 +62,7 @@ _GROUP_PRIORITY: list[str] = [
     "growth_rate",
     "ratio",
     "dcf",
+    "web_scrape",
 ]
 
 
@@ -81,12 +92,18 @@ def initialize_agent():
     agent_builder.add_node("router", router)
     agent_builder.add_node("plan_node", plan_node)
     agent_builder.add_node("tools", tools_node)
+    agent_builder.add_node("scrape_node", scrape_node)
     agent_builder.add_node("response_node", response_node)
 
     agent_builder.add_edge(START, "router")
     agent_builder.add_conditional_edges("router", _route_after_router, {"plan_node": "plan_node", "end": END})
-    agent_builder.add_conditional_edges("plan_node", _route_after_plan, {"tools": "tools", "response_node": "response_node"})
+    agent_builder.add_conditional_edges(
+        "plan_node",
+        _route_after_plan,
+        {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
+    )
     agent_builder.add_edge("tools", "plan_node")
+    agent_builder.add_edge("scrape_node", "plan_node")
     agent_builder.add_edge("response_node", END)
 
     return agent_builder.compile(checkpointer=MemorySaver())
@@ -308,6 +325,15 @@ def _events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
                         for tc in tool_calls
                     ]
                     events.append({"type": "thought", "content": f"Requesting: {', '.join(descs)}"})
+        elif plan_status == "needs_scrape":
+            for msg in messages:
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                scrape_calls = [tc for tc in tool_calls if tc.get("name") == _SCRAPE_TOOL_NAME]
+                if scrape_calls:
+                    events.append({"type": "status", "text": GROUP_LABELS["web_scrape"]})
+                    topics = [tc.get("args", {}).get("topic", "") for tc in scrape_calls if tc.get("args", {}).get("topic")]
+                    desc = f"Web search queued: {', '.join(topics)}" if topics else "Web search queued"
+                    events.append({"type": "thought", "content": desc})
         elif plan_status == "ready_to_respond":
             events.append({"type": "thought", "content": "Sufficient data gathered - composing response"})
 
@@ -329,6 +355,12 @@ def _events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
         if retrieved:
             events.extend(_status_events_from_tool_names(tool_names))
             events.append({"type": "thought", "content": f"Retrieved: {', '.join(retrieved)}"})
+
+    elif node_name == "scrape_node":
+        scrape_msgs = [m for m in messages if getattr(m, "name", None) == _SCRAPE_TOOL_NAME]
+        if scrape_msgs:
+            events.append({"type": "status", "text": "Searching the web..."})
+            events.append({"type": "thought", "content": f"Web search completed ({len(scrape_msgs)} topic(s) scraped)"})
 
     elif node_name == "response_node":
         if messages:
@@ -414,7 +446,14 @@ async def plan_node(state: AgentState, config: RunnableConfig):
         }
 
     _log_tool_calls("Execution Plan", plan_message)
-    if getattr(plan_message, "tool_calls", None):
+    tool_calls = getattr(plan_message, "tool_calls", None) or []
+    if tool_calls:
+        has_scrape = any(tc.get("name") == _SCRAPE_TOOL_NAME for tc in tool_calls)
+        if has_scrape:
+            return {
+                "messages": [plan_message],
+                "plan_status": "needs_scrape",
+            }
         return {
             "messages": [plan_message],
             "plan_status": "needs_tools",
@@ -504,6 +543,76 @@ def _group_calls_by_ticker(tool_calls: list[dict[str, Any]]) -> dict[str | None,
     return grouped
 
 
+async def scrape_node(state: AgentState):
+    logger.info("Scrape Node Activated")
+    print("[SCRAPE] scrape_node activated")
+    tool_calls = _latest_tool_calls(state)
+    scrape_calls = [tc for tc in tool_calls if tc.get("name") == _SCRAPE_TOOL_NAME]
+    other_calls = [tc for tc in tool_calls if tc.get("name") != _SCRAPE_TOOL_NAME]
+    print(f"[SCRAPE] {len(scrape_calls)} scrape call(s), {len(other_calls)} other call(s) deferred")
+
+    messages: list[ToolMessage] = []
+    new_entries: list[dict] = []
+
+    for call in scrape_calls:
+        args = call.get("args") or {}
+        topic = args.get("topic", "")
+        max_results = int(args.get("max_results", 3))
+        tool_call_id = call.get("id") or ""
+        print(f"[SCRAPE] Topic: {topic!r}  max_results={max_results}")
+
+        try:
+            decision: ScrapeDecision = await _invoke_llm_structured(
+                state,
+                f"{scrape_prompt}\n\nTopic: {topic}",
+                ScrapeDecision,
+            )
+            queries = decision.queries or [topic]
+        except Exception as exc:
+            logger.warning("Scrape query generation failed: %s", exc)
+            queries = [topic]
+
+        print(f"[SCRAPE] Expanded to {len(queries)} query/queries: {queries}")
+
+        all_results: list[dict] = []
+        for query in queries:
+            try:
+                hits = await asyncio.to_thread(search_and_scrape, query, max_results)
+                print(f"[SCRAPE] Query {query!r}: {len(hits)} hit(s) returned")
+                for r in hits:
+                    print(f"[SCRAPE]   [{r.confidence:.3f}] {r.title[:60]}  {r.url[:70]}")
+                    entry = {
+                        "query": query,
+                        "url": r.url,
+                        "title": r.title,
+                        "snippet": r.snippet,
+                        "confidence": r.confidence,
+                    }
+                    all_results.append(entry)
+                    if r.confidence >= _SCRAPE_MIN_CONFIDENCE:
+                        new_entries.append(entry)
+            except Exception as exc:
+                logger.warning("Scrape failed for query %r: %s", query, exc)
+                print(f"[SCRAPE] ERROR for query {query!r}: {exc}")
+
+        top = sorted(all_results, key=lambda x: x["confidence"], reverse=True)[:5]
+        print(f"[SCRAPE] Top {len(top)} result(s) kept for tool message (confidence >= {_SCRAPE_MIN_CONFIDENCE}: {len(new_entries)} added to history)")
+        content = json.dumps({"source": "web", "queries": queries, "results": top}, default=str)
+        messages.append(ToolMessage(content=content, name=_SCRAPE_TOOL_NAME, tool_call_id=tool_call_id))
+
+    for call in other_calls:
+        messages.append(ToolMessage(
+            content=json.dumps({"note": "Re-request this tool through plan_node in the next step."}),
+            name=call.get("name", "unknown"),
+            tool_call_id=call.get("id") or "",
+        ))
+
+    return {
+        "messages": messages,
+        "scrape_history": new_entries,
+    }
+
+
 async def response_node(state: AgentState):
     logger.info("Response Node Activated")
     try:
@@ -521,9 +630,11 @@ def _route_after_router(state: AgentState) -> str:
 
 
 def _route_after_plan(state: AgentState) -> str:
-    if state.get("plan_status") == "needs_tools":
+    status = state.get("plan_status")
+    if status == "needs_scrape":
+        return "scrape_node"
+    if status == "needs_tools":
         return "tools"
-
     return "response_node"
 
 
@@ -557,6 +668,7 @@ def _build_system_prompt(state: AgentState, node_prompt: str) -> str:
         "available_tools": state["available_tools"],
         "cached_data_catalog": state.get("data_catalog", empty_data_catalog()),
         "forced_response_due_to_recursion": state.get("forced_response_due_to_recursion", False),
+        "scrape_history": state.get("scrape_history", []),
     }
     return f"""
     Universal agent instructions:
