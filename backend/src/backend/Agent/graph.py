@@ -82,6 +82,7 @@ def _serialize_tools():
 
 _AVAILABLE_TOOLS = _serialize_tools()
 _TOOLS_BY_NAME = {tool.name: tool for tool in tools}
+_CHAT_MODEL_WITH_TOOLS = CHAT_MODEL.bind_tools(tools)
 
 
 def initialize_agent():
@@ -150,9 +151,6 @@ async def activate_agent_async(
         result = (await agent.aget_state(config)).values
     else:
         result = await agent.ainvoke(_initial_state(user_input), config=config)
-
-    for message in result["messages"][previous_message_count:]:
-        message.pretty_print()
 
     return result["messages"][-1].content
 
@@ -296,38 +294,28 @@ async def _run_ticker_group(
     calls: list[dict[str, Any]],
     data_cache: dict[str, Any],
 ) -> dict[str, Any]:
-    cache = deepcopy(data_cache)
-    messages = []
-    for call in calls:
+    async def _run_one(call: dict[str, Any]) -> tuple[ToolMessage, dict[str, Any]]:
+        cache = deepcopy(data_cache)
         name = call.get("name")
         args = dict(call.get("args") or {})
         tool_call_id = call.get("id") or ""
         tool = _TOOLS_BY_NAME.get(name)
         if tool is None:
-            content = json.dumps(
-                {
-                    "error": f"Unknown tool: {name}",
-                    "available_tools": sorted(_TOOLS_BY_NAME),
-                }
-            )
-            messages.append(ToolMessage(content=content, name=name, tool_call_id=tool_call_id))
-            continue
-
+            content = json.dumps({"error": f"Unknown tool: {name}", "available_tools": sorted(_TOOLS_BY_NAME)})
+            return ToolMessage(content=content, name=name, tool_call_id=tool_call_id), cache
         try:
-            result = await asyncio.to_thread(
-                tool.invoke,
-                {**args, "data_cache": cache},
-            )
+            result = await asyncio.to_thread(tool.invoke, {**args, "data_cache": cache})
             content = tool_content(result)
         except Exception as exc:
             content = f"Tool execution failed for {name}: {exc}"
+        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id), cache
 
-        messages.append(ToolMessage(content=content, name=name, tool_call_id=tool_call_id))
-
-    return {
-        "messages": messages,
-        "data_cache": cache,
-    }
+    results = await asyncio.gather(*[_run_one(call) for call in calls])
+    messages = [msg for msg, _ in results]
+    merged_cache = data_cache
+    for _, call_cache in results:
+        merged_cache = merge_cache(merged_cache, call_cache)
+    return {"messages": messages, "data_cache": merged_cache}
 
 
 def _group_calls_by_ticker(tool_calls: list[dict[str, Any]]) -> dict[str | None, list[dict[str, Any]]]:
@@ -347,10 +335,7 @@ async def scrape_node(state: AgentState):
     scrape_calls = [tc for tc in tool_calls if tc.get("name") == _SCRAPE_TOOL_NAME]
     print(f"[SCRAPE] {len(scrape_calls)} scrape call(s)")
 
-    messages: list[ToolMessage] = []
-    new_entries: list[dict] = []
-
-    for call in scrape_calls:
+    async def _process_one(call: dict) -> tuple[ToolMessage, list[dict]]:
         args = call.get("args") or {}
         topic = args.get("topic", "")
         max_results = min(int(args.get("max_results", 3)), SCRAPE_LIMIT)
@@ -375,8 +360,7 @@ async def scrape_node(state: AgentState):
         print(f"[SCRAPE] Expanded to {len(queries)} quer(ies): {queries}")
         print(f"[SCRAPE] goal={research_goal!r}  preferred={preferred_source_types}  avoid={avoid}")
 
-        all_results: list[dict] = []
-        for query in queries:
+        async def _run_query(query: str) -> tuple[str, list, Exception | None]:
             try:
                 hits = await search_and_scrape_async(
                     query,
@@ -385,23 +369,33 @@ async def scrape_node(state: AgentState):
                     research_goal=research_goal,
                     preferred_source_types=preferred_source_types,
                 )
-                print(f"[SCRAPE] Query {query!r}: {len(hits)} hit(s) returned")
-                for r in hits:
-                    print(f"[SCRAPE]   [{r.confidence:.3f}] [{r.source_type}] {r.title[:55]}  {r.url[:65]}")
-                    entry = {
-                        "query": query,
-                        "url": r.url,
-                        "title": r.title,
-                        "snippet": r.snippet,
-                        "confidence": r.confidence,
-                        "source_type": r.source_type,
-                    }
-                    all_results.append(entry)
-                    if r.confidence >= _SCRAPE_MIN_CONFIDENCE:
-                        new_entries.append(entry)
+                return query, hits, None
             except Exception as exc:
+                return query, [], exc
+
+        query_results = await asyncio.gather(*[_run_query(q) for q in queries])
+
+        all_results: list[dict] = []
+        new_entries_local: list[dict] = []
+        for query, hits, exc in query_results:
+            if exc is not None:
                 logger.warning("Scrape failed for query %r: %s", query, exc)
                 print(f"[SCRAPE] ERROR for query {query!r}: {exc}")
+                continue
+            print(f"[SCRAPE] Query {query!r}: {len(hits)} hit(s) returned")
+            for r in hits:
+                print(f"[SCRAPE]   [{r.confidence:.3f}] [{r.source_type}] {r.title[:55]}  {r.url[:65]}")
+                entry = {
+                    "query": query,
+                    "url": r.url,
+                    "title": r.title,
+                    "snippet": r.snippet,
+                    "confidence": r.confidence,
+                    "source_type": r.source_type,
+                }
+                all_results.append(entry)
+                if r.confidence >= _SCRAPE_MIN_CONFIDENCE:
+                    new_entries_local.append(entry)
 
         # Deduplicate by URL — keep highest-confidence entry per URL
         seen: dict[str, dict] = {}
@@ -410,17 +404,20 @@ async def scrape_node(state: AgentState):
             if url not in seen or entry["confidence"] > seen[url]["confidence"]:
                 seen[url] = entry
         top = sorted(seen.values(), key=lambda x: x["confidence"], reverse=True)[:5]
-        print(f"[SCRAPE] Top {len(top)} unique result(s) for tool message  ({len(new_entries)} added to history)")
+        print(f"[SCRAPE] Top {len(top)} unique result(s) for tool message  ({len(new_entries_local)} added to history)")
         content = json.dumps(
-            {
-                "source": "web",
-                "research_goal": research_goal,
-                "queries": queries,
-                "results": top,
-            },
+            {"source": "web", "research_goal": research_goal, "queries": queries, "results": top},
             default=str,
         )
-        messages.append(ToolMessage(content=content, name=_SCRAPE_TOOL_NAME, tool_call_id=tool_call_id))
+        return ToolMessage(content=content, name=_SCRAPE_TOOL_NAME, tool_call_id=tool_call_id), new_entries_local
+
+    call_results = await asyncio.gather(*[_process_one(call) for call in scrape_calls])
+
+    messages: list[ToolMessage] = []
+    new_entries: list[dict] = []
+    for msg, entries in call_results:
+        messages.append(msg)
+        new_entries.extend(entries)
 
     return {
         "messages": messages,
@@ -486,7 +483,7 @@ def _route_after_plan(state: AgentState):
 
 async def _invoke_llm(state: AgentState, prompt: str, use_tools: bool = False, data_payload: dict | None = None) -> AIMessage:
     system_prompt = _build_system_prompt(state, prompt, data_payload=data_payload)
-    model = CHAT_MODEL.bind_tools(tools) if use_tools else CHAT_MODEL
+    model = _CHAT_MODEL_WITH_TOOLS if use_tools else CHAT_MODEL
     return await model.ainvoke([SystemMessage(content=system_prompt)] + _messages_for_llm(state))
 
 
