@@ -1,3 +1,0 @@
-[console_scripts]
-dev = app.cli:dev
-share = app.cli:share
