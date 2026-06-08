@@ -224,7 +224,7 @@ def _mock_hf(ticker: str, fiscal_years: list[int]):
 
 def test_get_or_fetch_financials_reuses_cache():
     cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    with patch("backend.Agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials") as mock_fin:
         result, was_cached = get_or_fetch_financials(cache, "AAPL", span=5)
         mock_fin.get_cached_financials.assert_not_called()
     assert was_cached is True
@@ -233,7 +233,7 @@ def test_get_or_fetch_financials_reuses_cache():
 def test_get_or_fetch_financials_fetches_on_cache_miss():
     cache = empty_data_cache()
     fake_hf = _mock_hf("AAPL", [2022, 2023, 2024])
-    with patch("backend.Agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials") as mock_fin:
         mock_fin.get_cached_financials.return_value = fake_hf
         result, was_cached = get_or_fetch_financials(cache, "AAPL", span=3)
         mock_fin.get_cached_financials.assert_called_once_with("AAPL", 3)
@@ -244,7 +244,7 @@ def test_fiscal_years_does_not_use_span_2():
     """Requesting [2021, 2022] must fetch with a span large enough to reach 2021, not span=2."""
     cache = empty_data_cache()
     fake_hf = _mock_hf("AAPL", list(range(2018, 2026)))
-    with patch("backend.Agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials") as mock_fin:
         mock_fin.get_cached_financials.return_value = fake_hf
         get_or_fetch_financials(cache, "AAPL", span=5, fiscal_years=[2021, 2022])
         called_span = mock_fin.get_cached_financials.call_args[0][1]
@@ -253,7 +253,7 @@ def test_fiscal_years_does_not_use_span_2():
 
 def test_fiscal_years_cache_hit_does_not_call_external():
     cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    with patch("backend.Agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials") as mock_fin:
         result, was_cached = get_or_fetch_financials(cache, "AAPL", fiscal_years=[2021, 2022])
         mock_fin.get_cached_financials.assert_not_called()
     assert was_cached is True
@@ -267,7 +267,7 @@ def test_fiscal_year_cache_hit_normalizes_fy_prefix():
 
     _store_financials(cache, hf, span=1)
 
-    with patch("backend.Agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials") as mock_fin:
         result, was_cached = get_or_fetch_financials(cache, "AAPL", fiscal_years=[2023])
         mock_fin.get_cached_financials.assert_not_called()
     assert was_cached is True

@@ -19,7 +19,7 @@ uv run uvicorn backend.main:app --reload
 Run the agent interactively from the terminal:
 
 ```sh
-uv run python src/backend/Agent/main.py
+uv run python src/backend/agent/main.py
 ```
 
 ## Agent Architecture
@@ -69,7 +69,7 @@ Key fields in `AgentState`:
 
 ## Tool Catalogue
 
-All tools are defined in `src/backend/Agent/tools.py` and receive `data_cache` as an injected argument to avoid redundant API calls.
+All tools are defined in `src/backend/agent/tools.py` and receive `data_cache` as an injected argument to avoid redundant API calls.
 
 | Tool | Phase | Description |
 |------|-------|-------------|
@@ -136,7 +136,7 @@ The streaming endpoint emits structured progress events as the agent works:
 
 ```
 src/backend/
-├── Agent/
+├── agent/
 │   ├── graph.py          # LangGraph StateGraph definition and all node logic
 │   ├── state.py          # AgentState TypedDict
 │   ├── tools.py          # LangChain tool definitions and TOOL_SPECS
