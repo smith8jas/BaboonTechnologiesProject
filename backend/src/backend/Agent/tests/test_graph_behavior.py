@@ -19,20 +19,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from backend.Agent.cache import (
+from backend.agent.cache import (
     _has_fiscal_years,
     _financials_from_cache_by_years,
     empty_data_cache,
     get_or_fetch_financials,
 )
-from backend.Agent.graph import (
+from backend.agent.graph import (
     DEFAULT_RECURSION_LIMIT,
     RouterDecision,
     _route_after_plan,
     _route_after_router,
     _should_force_response,
 )
-from backend.Agent.state import merge_cache
+from backend.agent.state import merge_cache
 from backend.processing.schema import HistoricalFinancials
 
 
@@ -263,7 +263,7 @@ def test_fiscal_year_cache_hit_normalizes_fy_prefix():
     cache = empty_data_cache()
     hf = _mock_hf("AAPL", [2023])
     hf.periods[0].fiscal_year = "FY2023"
-    from backend.Agent.cache import _store_financials
+    from backend.agent.cache import _store_financials
 
     _store_financials(cache, hf, span=1)
 

@@ -36,6 +36,7 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
 
+    // Current persistence format: multiple named research sessions.
     if (saved?.sessions?.length) {
       return {
         activeSessionId: saved.activeSessionId ?? saved.sessions[0].id,
@@ -43,6 +44,7 @@ function loadState() {
       };
     }
 
+    // Migration path for earlier builds that stored a single message list.
     if (saved?.messages?.length) {
       const session = createSession({
         threadId: saved.threadId,
@@ -209,6 +211,8 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
     const assistantMessageId = crypto.randomUUID();
+    // Insert a placeholder immediately so streamed status and deltas have
+    // a stable message to update in place.
     const assistantMessage = {
       id: assistantMessageId,
       role: 'assistant',

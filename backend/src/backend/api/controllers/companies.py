@@ -1,3 +1,5 @@
+"""Controller functions that compose company data services for API routes."""
+
 from datetime import date
 
 from backend.api.schemas import DCFResponse, GrowthResponse, RatiosResponse
@@ -5,18 +7,21 @@ from backend.processing.schema import HistoricalFinancials, MarketData, SectorDa
 
 
 def get_company_financials(ticker: str, span: int) -> HistoricalFinancials:
+    """Return normalized financial statements for the requested ticker and span."""
     from backend.services import financials
 
     return financials.get_financials(_ticker(ticker), span)
 
 
 def get_company_market_data(ticker: str, include_rfr: bool) -> MarketData:
+    """Return current market data for the requested ticker."""
     from backend.services import financials
 
     return financials.get_market_data(_ticker(ticker), include_rfr)
 
 
 def get_company_ratios(ticker: str, span: int) -> RatiosResponse:
+    """Build the API ratio response from historical company financials."""
     from backend.services import financials, ratio
 
     symbol = _ticker(ticker)
@@ -31,6 +36,7 @@ def get_company_ratios(ticker: str, span: int) -> RatiosResponse:
 
 
 def get_company_growth(ticker: str, span: int) -> GrowthResponse:
+    """Build the API growth response from historical company financials."""
     from backend.services import financials, growth
 
     symbol = _ticker(ticker)
@@ -48,6 +54,7 @@ def get_company_dcf(
     span: int,
     year: int | None = None,
 ) -> DCFResponse:
+    """Assemble all inputs needed to run and return a DCF valuation."""
     from backend.services import dcf_engine, financials
 
     symbol = _ticker(ticker)
@@ -70,6 +77,7 @@ def get_company_dcf(
 
 
 def get_sector_data(year: int | None = None) -> SectorData:
+    """Return sector-level assumptions, defaulting to the current calendar year."""
     from backend.services import financials
 
     resolved_year = year or date.today().year
@@ -77,4 +85,5 @@ def get_sector_data(year: int | None = None) -> SectorData:
 
 
 def _ticker(ticker: str) -> str:
+    """Normalize ticker input once at the controller boundary."""
     return ticker.strip().upper()

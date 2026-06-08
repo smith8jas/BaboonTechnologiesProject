@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.Agent.graph import initialize_agent
+from backend.agent.graph import initialize_agent
 
 # agent/ -> backend/ -> src/ ; images dir lives at src/images
 IMAGES_DIR = Path(__file__).resolve().parents[2] / "images"

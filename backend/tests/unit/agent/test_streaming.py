@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
-from backend.Agent.graph import (
+from backend.agent.streaming import (
     GROUP_LABELS,
     activate_agent_stream_events_async,
 )
@@ -87,7 +87,7 @@ def test_stream_emits_status_thoughts_and_token_deltas():
     assert GROUP_LABELS["financial_statement"] in status_texts
     assert GROUP_LABELS["market_data"] in status_texts
     assert "Almost ready..." in status_texts
-    assert any(text.startswith("Requesting:") for text in thought_texts)
+    assert any("Requesting:" in text for text in thought_texts)
     assert any(text.startswith("Retrieved:") for text in thought_texts)
     assert "Composing response" in thought_texts
     assert delta_texts == ["Here is", " the answer."]

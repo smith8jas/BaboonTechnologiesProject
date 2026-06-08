@@ -4,7 +4,7 @@ from uuid import uuid4
 
 @lru_cache(maxsize=1)
 def _agent():
-    from backend.Agent.graph import initialize_agent
+    from backend.agent.graph import initialize_agent
 
     return initialize_agent()
 
@@ -22,7 +22,7 @@ def chat(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.Agent.graph import activate_agent
+    from backend.agent.graph import activate_agent
 
     response = activate_agent(
         text,
@@ -46,7 +46,7 @@ async def chat_async(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.Agent.graph import activate_agent_async
+    from backend.agent.graph import activate_agent_async
 
     response = await activate_agent_async(
         text,
@@ -70,7 +70,7 @@ def chat_stream(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.Agent.graph import activate_agent_stream
+    from backend.agent.streaming import activate_agent_stream
 
     return resolved_thread_id, activate_agent_stream(
         text,
@@ -93,7 +93,7 @@ async def chat_stream_async(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.Agent.graph import activate_agent_stream_async
+    from backend.agent.streaming import activate_agent_stream_async
 
     return resolved_thread_id, activate_agent_stream_async(
         text,
@@ -121,7 +121,7 @@ async def chat_stream_events_async(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.Agent.graph import activate_agent_stream_events_async
+    from backend.agent.streaming import activate_agent_stream_events_async
 
     return resolved_thread_id, activate_agent_stream_events_async(
         text,

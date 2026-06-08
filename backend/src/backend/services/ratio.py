@@ -11,6 +11,7 @@ def current_ratio(
     current_assets: List[float],
     current_liabilities: List[float]
 ) -> List[float | None]:
+    """Return current assets divided by current liabilities for each period."""
 
     return [
         round(ca / cl, 2) if cl not in (0, None) else None
@@ -23,6 +24,7 @@ def quick_ratio(
     inventory: List[float],
     current_liabilities: List[float]
 ) -> List[float | None]:
+    """Return quick assets divided by current liabilities for each period."""
 
     return [
         round((ca - (inv or 0)) / cl, 2) if cl not in (0, None) else None
@@ -38,6 +40,7 @@ def cash_ratio(
     cash: List[float],
     current_liabilities: List[float]
 ) -> List[float | None]:
+    """Return cash divided by current liabilities for each period."""
 
     return [
         round(c / cl, 2) if cl not in (0, None) else None
@@ -49,6 +52,7 @@ def debt_to_equity(
     total_liabilities: List[float],
     total_equity: List[float]
 ) -> List[float | None]:
+    """Return total liabilities divided by total equity for each period."""
 
     return [
         round(tl / te, 2) if te not in (0, None) else None
@@ -60,6 +64,7 @@ def debt_to_assets(
     total_liabilities: List[float],
     total_assets: List[float]
 ) -> List[float | None]:
+    """Return total liabilities divided by total assets for each period."""
 
     return [
         round(tl / ta, 2) if ta not in (0, None) else None
@@ -71,6 +76,7 @@ def interest_coverage(
     ebit: List[float],
     interest_expense: List[float]
 ) -> List[float | None]:
+    """Return EBIT divided by interest expense for each period."""
 
     return [
         round(e / ie, 2) if ie not in (0, None) else None
@@ -82,6 +88,7 @@ def gross_profit_margin(
     gross_profit: List[float],
     revenue: List[float]
 ) -> List[float | None]:
+    """Return gross profit divided by revenue for each period."""
 
     return [
         round(g / r, 2) if r not in (0, None) and g is not None else None
@@ -93,6 +100,7 @@ def ebit_margin(
     ebit: List[float],
     revenue: List[float]
 ) -> List[float | None]:
+    """Return EBIT divided by revenue for each period."""
 
     return [
         round(e / r, 2) if r not in (0, None) else None
@@ -104,6 +112,7 @@ def net_margin(
     net_income: List[float],
     revenue: List[float]
 ) -> List[float | None]:
+    """Return net income divided by revenue for each period."""
 
     return [
         round(ni / r, 2) if r not in (0, None) else None
@@ -115,6 +124,7 @@ def dso(
     receivables: List[float],
     revenue: List[float]
 ) -> List[float | None]:
+    """Return days sales outstanding for each period."""
 
     return [
         round(r / rev * 365, 2) if rev not in (0, None) and r is not None else None
@@ -126,6 +136,7 @@ def dio(
     inventory: List[float],
     cogs: List[float]
 ) -> List[float | None]:
+    """Return days inventory outstanding for each period."""
 
     return [
         round(inv / c * 365, 2) if c not in (0, None) and inv is not None else None
@@ -137,6 +148,7 @@ def dpo(
     payables: List[float],
     cogs: List[float]
 ) -> List[float | None]:
+    """Return days payable outstanding for each period."""
 
     return [
         round(p / c * 365, 2) if c not in (0, None) and p is not None else None

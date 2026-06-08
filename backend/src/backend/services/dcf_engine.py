@@ -1,3 +1,5 @@
+"""DCF assumption, projection, and valuation calculations."""
+
 from backend.processing.schema import (
     HistoricalFinancials,
     MarketData,
@@ -9,6 +11,7 @@ from backend.processing.schema import (
 
 
 def _avg(values: list) -> float | None:
+    """Average the non-null values in a list, returning None for empty input."""
     clean = [v for v in values if v is not None]
     return sum(clean) / len(clean) if clean else None
 
@@ -17,9 +20,8 @@ def build_assumptions(
     hf: HistoricalFinancials,
     md: MarketData | None = None,
     sd: SectorData | None = None,
-) -> Assumptions: # Can (and should in the near future) accept other classes like
-                  # MarketData, SectorData, even SentimentAnalysis!!!
-                  # This is the heart of the DCF engine!
+) -> Assumptions:
+    """Derive baseline DCF assumptions from the historical financial series."""
     periods = hf.periods
     rev = [p.income_statement.revenue for p in periods]
 
@@ -70,9 +72,8 @@ def build_assumptions(
     return Assumptions(**derived)
 
 
-def build_valuation_inputs(hf:HistoricalFinancials, md: MarketData, sd: SectorData) -> ValuationInputs:
-
-
+def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorData) -> ValuationInputs:
+    """Combine company, market, and sector data into WACC and equity bridge inputs."""
     latest_bs = hf.periods[-1].balance_sheet
     total_debt = (latest_bs.long_term_debt or 0.0) + (latest_bs.short_term_debt or 0.0)
 
@@ -122,8 +123,7 @@ def build_valuation_inputs(hf:HistoricalFinancials, md: MarketData, sd: SectorDa
         if p.income_statement.tax_expense is not None
         and p.income_statement.ebit not in (None, 0)
     ]
-    tax_rate = sum(tax_rates) / len(tax_rates) if tax_rates else None   # else sd.tax_rates (uncomment once we have 
-                                                                        # damodaran tax rates mapped from sic code)
+    tax_rate = sum(tax_rates) / len(tax_rates) if tax_rates else None
 
     return ValuationInputs(
         ticker=hf.ticker,

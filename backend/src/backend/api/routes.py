@@ -1,3 +1,5 @@
+"""FastAPI route definitions and transport-level error handling."""
+
 import inspect
 import json
 from typing import Any, Callable
@@ -23,11 +25,13 @@ agent_router = APIRouter(prefix="/agent", tags=["agent"])
 
 @router.get("/")
 def read_root() -> dict[str, str]:
+    """Return a small API identity payload for browsers and smoke tests."""
     return {"message": "Baboon Technologies API"}
 
 
 @router.get("/health")
 def health_check() -> dict[str, str]:
+    """Expose a cheap health probe used by the frontend status indicator."""
     return {"status": "ok"}
 
 
@@ -39,6 +43,7 @@ def get_company_financials(
     ticker: str = Path(..., min_length=1, max_length=10),
     span: int = Query(default=5, ge=1, le=10),
 ) -> HistoricalFinancials:
+    """Fetch normalized historical financial statements for a ticker."""
     return _call_controller(company_controller.get_company_financials, ticker, span)
 
 
@@ -50,6 +55,7 @@ def get_company_market_data(
     ticker: str = Path(..., min_length=1, max_length=10),
     include_rfr: bool = Query(default=True),
 ) -> MarketData:
+    """Fetch current market data and, optionally, the risk-free rate."""
     return _call_controller(
         company_controller.get_company_market_data,
         ticker,
@@ -65,6 +71,7 @@ def get_company_ratios(
     ticker: str = Path(..., min_length=1, max_length=10),
     span: int = Query(default=5, ge=1, le=10),
 ) -> RatiosResponse:
+    """Calculate grouped ratio metrics from historical financial statements."""
     return _call_controller(company_controller.get_company_ratios, ticker, span)
 
 
@@ -76,6 +83,7 @@ def get_company_growth(
     ticker: str = Path(..., min_length=1, max_length=10),
     span: int = Query(default=5, ge=2, le=10),
 ) -> GrowthResponse:
+    """Calculate year-over-year growth rates from historical financial statements."""
     return _call_controller(company_controller.get_company_growth, ticker, span)
 
 
@@ -88,6 +96,7 @@ def get_company_dcf(
     span: int = Query(default=5, ge=2, le=10),
     year: int | None = Query(default=None, ge=1900),
 ) -> DCFResponse:
+    """Run the DCF pipeline using company financials, market data, and sector inputs."""
     return _call_controller(company_controller.get_company_dcf, ticker, span, year)
 
 
@@ -99,6 +108,7 @@ def get_company_dcf(
 def get_sector_data(
     year: int | None = Query(default=None, ge=1900),
 ) -> SectorData:
+    """Fetch sector-wide valuation assumptions for the requested year."""
     return _call_controller(company_controller.get_sector_data, year)
 
 
@@ -107,14 +117,18 @@ def get_sector_data(
     response_model=AgentChatResponse,
 )
 async def chat_with_agent(request: AgentChatRequest) -> AgentChatResponse:
+    """Return a complete agent answer after the graph finishes."""
     return await _call_controller_async(agent_controller.chat_with_agent, request)
 
 
 @agent_router.post("/chat/stream")
 async def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse:
+    """Stream agent status, thoughts, and response deltas as newline-delimited JSON."""
     thread_id, stream = await _call_controller_async(agent_controller.stream_chat_with_agent, request)
 
     async def event_stream():
+        # Send the resolved thread first so the client can persist continuity
+        # before receiving assistant text.
         yield _stream_event({"type": "thread", "thread_id": thread_id})
 
         try:
@@ -134,6 +148,7 @@ async def stream_chat_with_agent(request: AgentChatRequest) -> StreamingResponse
 
 
 def _call_controller(controller: Callable[..., Any], *args: Any) -> Any:
+    """Run a sync controller and normalize service exceptions for HTTP clients."""
     try:
         return controller(*args)
     except Exception as exc:
@@ -141,6 +156,7 @@ def _call_controller(controller: Callable[..., Any], *args: Any) -> Any:
 
 
 async def _call_controller_async(controller: Callable[..., Any], *args: Any) -> Any:
+    """Run either sync or async controllers behind the same route wrapper."""
     try:
         result = controller(*args)
         if inspect.isawaitable(result):
@@ -151,6 +167,7 @@ async def _call_controller_async(controller: Callable[..., Any], *args: Any) -> 
 
 
 def _raise_service_error(exc: Exception):
+    """Translate domain/service exceptions into stable FastAPI error responses."""
     if isinstance(exc, HTTPException):
         raise exc
 
@@ -169,6 +186,7 @@ def _raise_service_error(exc: Exception):
 
 
 def _stream_event(payload: dict[str, Any]) -> str:
+    """Encode one streaming payload as an NDJSON line."""
     return f"{json.dumps(payload, default=str)}\n"
 
 

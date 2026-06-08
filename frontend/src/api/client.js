@@ -1,6 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 export async function checkHealth() {
+  // The UI only needs a boolean status; callers should not handle transport details.
   try {
     const response = await fetch(`${API_BASE_URL}/health`);
     return response.ok;
@@ -40,6 +41,8 @@ export async function streamChatMessage({
   onStatus,
   onThought,
 }) {
+  // Prefer the streaming endpoint for live status and token deltas.
+  // Fall back to the non-streaming request if the browser lacks a readable body.
   const response = await fetch(`${API_BASE_URL}/agent/chat/stream`, {
     method: 'POST',
     headers: {
@@ -91,6 +94,7 @@ export async function streamChatMessage({
 }
 
 function readError(payload) {
+  // FastAPI may return either a string detail or the structured shape built in routes.py.
   if (typeof payload?.detail === 'string') {
     return payload.detail;
   }
@@ -99,6 +103,7 @@ function readError(payload) {
 }
 
 function readStreamEvent(line, handlers) {
+  // The backend emits newline-delimited JSON events so partial chunks are buffered upstream.
   if (!line.trim()) {
     return;
   }

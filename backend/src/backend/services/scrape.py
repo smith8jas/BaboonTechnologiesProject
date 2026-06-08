@@ -1,3 +1,5 @@
+"""Lightweight search-and-scrape helpers for agent web research."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +28,8 @@ _SOURCE_TYPE_PATTERNS: dict[str, list[str]] = {
 
 @dataclass
 class ScrapeResult:
+    """Normalized web research result returned to the agent tool layer."""
+
     url: str
     title: str
     snippet: str
@@ -127,6 +131,7 @@ async def _fetch_and_parse(
     research_goal: str,
     fallback_snippet: str,
 ) -> ScrapeResult | None:
+    """Fetch one search result and reduce the page to a scored text snippet."""
     print(f"[SCRAPE] Fetching: {url[:80]}")
     try:
         response = await client.get(url)
@@ -161,6 +166,7 @@ async def _fetch_and_parse(
 
 
 def _confidence(text: str, query: str, research_goal: str = "") -> float:
+    """Score whether scraped text appears relevant to the query and research goal."""
     if not text:
         return 0.0
 
@@ -186,6 +192,7 @@ def _confidence(text: str, query: str, research_goal: str = "") -> float:
 
 
 def _infer_source_type(url: str) -> str:
+    """Classify a URL into the coarse source categories used by the agent."""
     url_lower = url.lower()
     for source_type, patterns in _SOURCE_TYPE_PATTERNS.items():
         if any(p in url_lower for p in patterns):

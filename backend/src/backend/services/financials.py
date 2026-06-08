@@ -85,6 +85,8 @@ def get_cached_financials(ticker: str, span: int = 5) -> HistoricalFinancials:
             _financials_cache.move_to_end(key)
             return cached
 
+        # Use a per-key lock so a burst of identical requests only performs one
+        # external Edgar fetch while unrelated tickers can still proceed.
         key_lock = _financials_key_locks.setdefault(key, Lock())
 
     with key_lock:
@@ -115,11 +117,6 @@ def get_market_data(ticker: str, include_rfr: bool = True) -> MarketData:
 
     Returns:
         MarketData with current market values.
-        # ticker: Stock ticker symbol.
-        include_rfr: If True, fetch FRED DGS10 risk-free rate.
-
-    Returns:
-        # MarketData with current market values.
     """
     yahoo = fetch_yahoo_market(ticker)
     rfr = fetch_risk_free_rate() if include_rfr else None

@@ -48,14 +48,17 @@ EMPTY_DATA_CATALOG = {
 
 
 def empty_data_cache() -> dict[str, Any]:
+    """Return a fresh mutable cache with the expected top-level keys."""
     return deepcopy(EMPTY_DATA_CACHE)
 
 
 def empty_data_catalog() -> dict[str, Any]:
+    """Return a fresh catalog skeleton used for prompt-visible data summaries."""
     return deepcopy(EMPTY_DATA_CATALOG)
 
 
 def build_data_catalog(cache: dict[str, Any]) -> dict[str, Any]:
+    """Build a compact availability summary for model prompts."""
     catalog = empty_data_catalog()
 
     for ticker in sorted((cache.get(CACHE_COMPANIES) or {})):
@@ -119,6 +122,7 @@ def build_data_catalog(cache: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_data_payload(cache: dict[str, Any]) -> dict[str, Any]:
+    """Build the detailed cached data payload used by response generation."""
     payload: dict[str, Any] = {}
 
     for ticker, company in (cache.get(CACHE_COMPANIES) or {}).items():
@@ -180,6 +184,7 @@ def build_data_payload(cache: dict[str, Any]) -> dict[str, Any]:
 
 
 def state_cache(state: dict[str, Any]) -> dict[str, Any]:
+    """Return a normalized deep copy of the graph state's data cache."""
     cache = deepcopy(state.get("data_cache") or empty_data_cache())
     cache.setdefault(CACHE_COMPANIES, {})
     cache.setdefault(CACHE_GLOBAL, {}).setdefault(CACHE_SECTOR_DATA_BY_YEAR, {})
@@ -187,6 +192,7 @@ def state_cache(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_content(payload: Any) -> str:
+    """Serialize tool payloads into JSON strings for LangChain ToolMessage content."""
     if isinstance(payload, BaseModel):
         return json.dumps(_dump_model(payload), default=str)
     return json.dumps(payload, default=str)
@@ -198,6 +204,7 @@ def get_or_fetch_financials(
     span: int = 5,
     fiscal_years: list[int] | None = None,
 ) -> tuple[HistoricalFinancials, bool]:
+    """Return cached financials when coverage is sufficient, otherwise fetch and store."""
     if fiscal_years:
         if _has_fiscal_years(cache, ticker, fiscal_years):
             return _financials_from_cache_by_years(cache, ticker, fiscal_years), True
@@ -219,6 +226,7 @@ def get_or_fetch_market_data(
     ticker: str,
     include_rfr: bool = True,
 ) -> tuple[MarketData, bool]:
+    """Return cached market data when possible, otherwise fetch and store it."""
     if _has_market_data(cache, ticker, include_rfr):
         return _market_data_from_cache(cache, ticker), True
 
@@ -231,6 +239,7 @@ def get_or_fetch_sector_data(
     cache: dict[str, Any],
     year: int | None,
 ) -> tuple[SectorData, bool]:
+    """Return cached sector assumptions for a year, otherwise fetch and store them."""
     resolved_year = str(year or date.today().year)
     cached = cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR].get(resolved_year)
     if cached:
@@ -251,6 +260,7 @@ def get_or_calculate_growth(
     span: int,
     statement: str,
 ) -> tuple[dict[str, Any], bool]:
+    """Return cached growth calculations for a statement subdomain or compute them."""
     company = _company(cache, ticker)
     growth_cache = company[CACHE_CALCULATED].setdefault(CACHE_GROWTH, {})
     cached = growth_cache.get(statement)
@@ -275,6 +285,7 @@ def get_or_calculate_ratios(
     span: int,
     ratio_type: str,
 ) -> tuple[dict[str, Any], bool]:
+    """Return cached ratio calculations for a ratio subdomain or compute them."""
     company = _company(cache, ticker)
     ratios_cache = company[CACHE_CALCULATED].setdefault(CACHE_RATIOS, {})
     cached = ratios_cache.get(ratio_type)
@@ -299,6 +310,7 @@ def get_or_calculate_dcf(
     span: int,
     year: int,
 ) -> tuple[dict[str, Any], bool]:
+    """Return cached DCF output for the default scenario or compute the valuation pipeline."""
     company = _company(cache, ticker)
     dcf_cache = company[CACHE_CALCULATED].setdefault(CACHE_DCF, {CACHE_SCENARIOS: {}})
     cached = dcf_cache.setdefault(CACHE_SCENARIOS, {}).get(SCENARIO_DEFAULT)

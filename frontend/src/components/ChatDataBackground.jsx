@@ -17,6 +17,7 @@ function randomTickerText() {
 }
 
 function makeStream(width, height) {
+  // Floating ticker fragments sit at different speeds to create depth without heavy visuals.
   return {
     x: randomBetween(24, Math.max(25, width - 90)),
     y: randomBetween(-height, height),
@@ -27,6 +28,7 @@ function makeStream(width, height) {
 }
 
 function makeCandle(width, height) {
+  // Candle shapes are decorative only; values are randomized and intentionally non-semantic.
   const high = randomBetween(18, 58);
   const body = randomBetween(8, Math.max(10, high - 8));
   const y = randomBetween(96, Math.max(120, height - 130));
@@ -69,6 +71,7 @@ export default function ChatDataBackground() {
     }
 
     function buildScene() {
+      // Scale density with viewport width so the background stays subtle on small screens.
       const streamCount = Math.max(8, Math.min(24, Math.round(width / 70)));
       streams = Array.from({ length: streamCount }, () => makeStream(width, height));
       candles = Array.from({ length: Math.max(3, Math.round(width / 340)) }, () => makeCandle(width, height));
