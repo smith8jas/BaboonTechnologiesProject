@@ -422,7 +422,7 @@ def _status_events_from_tool_names(tool_names: list[str]) -> list[dict]:
 
 def _agent_config(thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
     return {
-        "recursion_limit": recursion_limit,
+        "recursion_limit": DEFAULT_RECURSION_LIMIT * 1000,
         "configurable": {"thread_id": thread_id},
     }
 

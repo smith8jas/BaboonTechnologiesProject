@@ -271,6 +271,7 @@ Planning rules:
 - Use equivalent tool calls for every company in a comparison.
 - Use scrape_web for external factors, qualitative context, or recent events that structured financial tools cannot provide whenever they are relevant to the analysis.
 - Do not use scrape_web to fetch numbers that structured financial tools can provide.
+- Do not call the same tool with the same arguments more than once. If a tool has already been called with those exact arguments, its result is already in the gathered data — calling it again adds nothing and wastes a planning iteration.
 Span and period rules:
 - Tool span means the latest N annual fiscal periods.
 - If the user asks for specific years, choose a span large enough to include those years.
@@ -352,6 +353,7 @@ Tool-use rules:
 - Scraping for external factors such as market analysis is mandatory. Understand what external factors mean.
 - Always call scrape_web to gather qualitative context, recent news, and events alongside structured financial data.
 - Do not use scrape_web for financial statement data that structured tools can retrieve.
+- Do not call the same tool with the same arguments more than once. If a tool has already been called with those exact arguments, its result is already in the gathered data — calling it again is a duplicate, not additional research.
 
 ReAct loop:
 After each round of tool results, ask: which tools have not been called yet that would add a new analytical dimension not already present in the gathered data? Call them. When in doubt, call the tool — the cost of a missing dimension is higher than the cost of an extra call.
