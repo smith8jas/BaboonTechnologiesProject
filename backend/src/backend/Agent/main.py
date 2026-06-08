@@ -62,8 +62,16 @@ def print_agent_state(agent, thread_id):
           content = getattr(message, "content", "")
           print(f"{i}. {role}: {content[:300]}")
 
+def save_graph_png(agent):
+    output_path = Path(__file__).parent / "graph.png"
+    png_bytes = agent.get_graph().draw_mermaid_png()
+    output_path.write_bytes(png_bytes)
+    print(f"Graph saved to {output_path}")
+
+
 if __name__ == "__main__":
-    
+
     agent = initialize_agent()
+    save_graph_png(agent)
 
     chatbot(agent)

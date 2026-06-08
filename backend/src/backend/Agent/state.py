@@ -29,6 +29,7 @@ class AgentState(TypedDict):
     available_tools: dict[str, list[dict[str, Any]]]
     router_route: NotRequired[str]
     plan_status: NotRequired[str]
+    plan_iterations: NotRequired[int]
     forced_response_due_to_recursion: NotRequired[bool]
     data_cache: NotRequired[Annotated[dict[str, Any], merge_cache]]
     data_catalog: NotRequired[dict[str, Any]]

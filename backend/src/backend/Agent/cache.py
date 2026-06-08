@@ -118,6 +118,67 @@ def build_data_catalog(cache: dict[str, Any]) -> dict[str, Any]:
     return catalog
 
 
+def build_data_payload(cache: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+
+    for ticker, company in (cache.get(CACHE_COMPANIES) or {}).items():
+        entry: dict[str, Any] = {}
+        searched = company.get(CACHE_SEARCHED, {})
+        calculated = company.get(CACHE_CALCULATED, {})
+
+        financials_entry = searched.get(CACHE_FINANCIALS)
+        if financials_entry:
+            entry[CACHE_FINANCIALS] = {
+                "metadata": financials_entry.get("metadata"),
+                "periods": sorted(
+                    financials_entry.get("periods_by_fiscal_year", {}).values(),
+                    key=lambda p: p.get("period_end", ""),
+                ),
+            }
+
+        market_data_entry = searched.get(CACHE_MARKET_DATA)
+        if market_data_entry:
+            entry[CACHE_MARKET_DATA] = market_data_entry.get("payload")
+
+        growth_entry = calculated.get(CACHE_GROWTH, {})
+        if growth_entry:
+            entry[CACHE_GROWTH] = {
+                stmt: data["payload"]
+                for stmt, data in growth_entry.items()
+                if data.get("payload") is not None
+            }
+
+        ratios_entry = calculated.get(CACHE_RATIOS, {})
+        if ratios_entry:
+            entry[CACHE_RATIOS] = {
+                ratio_type: data["payload"]
+                for ratio_type, data in ratios_entry.items()
+                if data.get("payload") is not None
+            }
+
+        dcf_scenarios = calculated.get(CACHE_DCF, {}).get(CACHE_SCENARIOS, {})
+        if dcf_scenarios:
+            entry[CACHE_DCF] = {
+                scenario: data["payload"]
+                for scenario, data in dcf_scenarios.items()
+                if data.get("payload") is not None
+            }
+
+        if entry:
+            payload[ticker] = entry
+
+    sector_by_year = (cache.get(CACHE_GLOBAL) or {}).get(CACHE_SECTOR_DATA_BY_YEAR) or {}
+    sector_data = {
+        year: data["payload"]
+        for year, data in sector_by_year.items()
+        if data.get("payload") is not None
+    }
+    if sector_data:
+        payload["sector_data"] = sector_data
+
+    return payload
+
+
 def state_cache(state: dict[str, Any]) -> dict[str, Any]:
     cache = deepcopy(state.get("data_cache") or empty_data_cache())
     cache.setdefault(CACHE_COMPANIES, {})

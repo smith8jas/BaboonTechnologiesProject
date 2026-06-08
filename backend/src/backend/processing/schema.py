@@ -214,6 +214,7 @@ class ValuationInputs(BaseModel):
     tax_rate:                       float
     long_term_growth_rate:          float               # From industry growth (or GDP growth)
     projection_years:               int = 5
+    falled_back_to_risk_free_rate:  bool = False
 
     @computed_field
     @property
@@ -247,20 +248,21 @@ class Assumptions(BaseModel):
 
 
 class DCFOutput(BaseModel):
-    ticker:                     str
-    fiscal_year:                str
-    projection_years:           list[str]    # projection years ["FY2026"...]
-    intrinsic_value_per_share:  float
-    terminal_value:             float
-    pv_terminal:                float
-    tv_pct_of_ev:               float
-    enterprise_value:           float
-    projected_fcff:             list[float]
-    pv_fcff:                    list[float]
-    projected_revenue:          list[float]
-    projected_ebit:             list[float]
-    projected_ebiat:            list[float]
-    projected_da:               list[float]
-    projected_capex:            list[float]
-    projected_delta_nwc:        list[float]
-    pv_factors:                 list[float]
+    ticker:                         str
+    fiscal_year:                    str
+    projection_years:               list[str]    # projection years ["FY2026"...]
+    intrinsic_value_per_share:      float
+    terminal_value:                 float
+    pv_terminal:                    float
+    tv_pct_of_ev:                   float
+    enterprise_value:               float
+    projected_fcff:                 list[float]
+    pv_fcff:                        list[float]
+    projected_revenue:              list[float]
+    projected_ebit:                 list[float]
+    projected_ebiat:                list[float]
+    projected_da:                   list[float]
+    projected_capex:                list[float]
+    projected_delta_nwc:            list[float]
+    pv_factors:                     list[float]
+    falled_back_to_risk_free_rate:  bool = False

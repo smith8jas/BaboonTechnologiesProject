@@ -74,22 +74,46 @@ def build_valuation_inputs(hf:HistoricalFinancials, md: MarketData, sd: SectorDa
 
 
     latest_bs = hf.periods[-1].balance_sheet
-
-    interest_expenses = [
-        abs(p.income_statement.interest_expense) / p.balance_sheet.long_term_debt
-        for p in hf.periods
-        if p.income_statement.interest_expense and p.balance_sheet.long_term_debt
-    ]
-    if not interest_expenses:
-        interest_expenses = [
-            abs(p.cash_flow.interest_expense) / p.balance_sheet.long_term_debt
-            for p in hf.periods
-            if p.cash_flow.interest_expense and p.balance_sheet.long_term_debt
-        ]
-
-    cost_of_debt = sum(interest_expenses) / len(interest_expenses) if interest_expenses else None
-
     total_debt = (latest_bs.long_term_debt or 0.0) + (latest_bs.short_term_debt or 0.0)
+
+    falled_back_to_risk_free_rate = False
+
+    if total_debt == 0:
+        # Debt weight in WACC is zero — cost_of_debt is irrelevant
+        cost_of_debt = 0.0
+    else:
+        # Level 1: IS interest_expense / long_term_debt
+        rates = [
+            abs(p.income_statement.interest_expense) / p.balance_sheet.long_term_debt
+            for p in hf.periods
+            if p.income_statement.interest_expense and p.balance_sheet.long_term_debt
+        ]
+        # Level 2: CFS interest_expense / long_term_debt
+        if not rates:
+            rates = [
+                abs(p.cash_flow.interest_expense) / p.balance_sheet.long_term_debt
+                for p in hf.periods
+                if p.cash_flow.interest_expense and p.balance_sheet.long_term_debt
+            ]
+        # Level 3: back-calculate from EBIT - (net_income + tax_expense)
+        if not rates:
+            rates = [
+                (p.income_statement.ebit - p.income_statement.net_income - p.income_statement.tax_expense)
+                / p.balance_sheet.long_term_debt
+                for p in hf.periods
+                if all(x is not None for x in [
+                    p.income_statement.ebit,
+                    p.income_statement.net_income,
+                    p.income_statement.tax_expense,
+                ]) and p.balance_sheet.long_term_debt
+            ]
+            rates = [r for r in rates if r > 0]
+        # Level 4: risk-free rate + 150bps floor
+        if rates:
+            cost_of_debt = sum(rates) / len(rates)
+        else:
+            cost_of_debt = md.risk_free_rate + 0.015
+            falled_back_to_risk_free_rate = True
 
     # Tax rate — trailing average inline
     tax_rates = [
@@ -112,6 +136,7 @@ def build_valuation_inputs(hf:HistoricalFinancials, md: MarketData, sd: SectorDa
         total_debt=total_debt,
         tax_rate=tax_rate,
         long_term_growth_rate=sd.long_term_growth_rate,
+        falled_back_to_risk_free_rate=falled_back_to_risk_free_rate,
     )
 
 
@@ -251,4 +276,5 @@ def run_dcf(
         projected_fcff=ufcf,
         pv_factors=pv_factors,
         pv_fcff=pv_ufcf,
+        falled_back_to_risk_free_rate=inputs.falled_back_to_risk_free_rate,
     )

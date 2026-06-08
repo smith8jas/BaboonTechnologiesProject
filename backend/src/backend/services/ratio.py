@@ -25,7 +25,7 @@ def quick_ratio(
 ) -> List[float | None]:
 
     return [
-        round((ca - inv) / cl, 2) if cl not in (0, None) else None
+        round((ca - (inv or 0)) / cl, 2) if cl not in (0, None) else None
         for ca, inv, cl in zip(
             current_assets,
             inventory,
@@ -84,7 +84,7 @@ def gross_profit_margin(
 ) -> List[float | None]:
 
     return [
-        round(g / r, 2) if r not in (0, None) else None
+        round(g / r, 2) if r not in (0, None) and g is not None else None
         for g, r in zip(gross_profit, revenue)
     ]
 
