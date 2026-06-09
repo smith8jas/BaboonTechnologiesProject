@@ -255,6 +255,15 @@ Output: planning rationale as plain text, then tool calls. No other text.
 
 {_DONT_PLAN}
 
+Tool priority rule:
+- Always prefer structured tools (financials, ratios, market data, DCF) over scrape_web when
+  the data is within their scope. Use scrape_web only for what structured tools cannot provide:
+  qualitative context, news, guidance, or forward-looking information.
+- runtime_context.current_year is the authoritative current year — trust it, not your training
+  priors. Any fiscal year before current_year has already ended and its actuals are available
+  via structured tools. Example: if current_year=2026, then FY2025, FY2024, FY2023 are all
+  completed historical years — use structured tools, not scrape_web.
+
 {_TOOL_USE_RULES}
 
 {_SPAN_RULES}
