@@ -597,7 +597,6 @@ def _build_system_prompt(state: AgentState, node_prompt: str, data_payload: dict
         "cached_data_catalog": state.get("data_catalog", empty_data_catalog()),
         "forced_response_due_to_recursion": state.get("forced_response_due_to_recursion", False),
         "scrape_history": state.get("scrape_history", [])[-20:],
-        "tool_guidance": state.get("tool_guidance", ""),
     }
     if data_payload is not None:
         context["gathered_data"] = data_payload
