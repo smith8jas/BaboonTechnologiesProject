@@ -431,21 +431,24 @@ async def _invoke_scrape_decision(state: AgentState, topic: str) -> ScrapeDecisi
     Bypasses _messages_for_llm entirely so the model never sees the unresolved
     tool_calls from the plan message, which would cause an API validation error.
     """
-    system_content = (
+    stable = (
         f"Universal agent instructions:\n{state.get('context', '')}\n\n"
-        f"Node instructions:\n{scrape_prompt}\n\n"
-        f"Runtime context:\n"
-        + json.dumps(
-            {
-                "latest_user_message": _latest_human_message_content(state),
-                "current_year": state.get("current_year"),
-                "topic": topic,
-            },
-            indent=2,
-        )
+        f"Node instructions:\n{scrape_prompt}"
     )
+    volatile = "\n\nRuntime context:\n" + json.dumps(
+        {
+            "latest_user_message": _latest_human_message_content(state),
+            "current_year": state.get("current_year"),
+            "topic": topic,
+        },
+        indent=2,
+    )
+    system_blocks = [
+        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": volatile},
+    ]
     model = CHAT_MODEL.with_structured_output(ScrapeDecision)
-    return await model.ainvoke([SystemMessage(content=system_content)])
+    return await model.ainvoke([SystemMessage(content=system_blocks)])
 
 
 async def response_node(state: AgentState):
@@ -482,18 +485,25 @@ def _route_after_plan(state: AgentState):
 
 
 async def _invoke_llm(state: AgentState, prompt: str, use_tools: bool = False, data_payload: dict | None = None) -> AIMessage:
-    system_prompt = _build_system_prompt(state, prompt, data_payload=data_payload)
+    system_blocks = _build_system_prompt(state, prompt, data_payload=data_payload)
     model = _CHAT_MODEL_WITH_TOOLS if use_tools else CHAT_MODEL
-    return await model.ainvoke([SystemMessage(content=system_prompt)] + _messages_for_llm(state))
+    return await model.ainvoke([SystemMessage(content=system_blocks)] + _messages_for_llm(state))
 
 
 async def _invoke_llm_structured(state: AgentState, prompt: str, schema: type) -> Any:
-    system_prompt = _build_system_prompt(state, prompt)
+    system_blocks = _build_system_prompt(state, prompt)
     model = CHAT_MODEL.with_structured_output(schema)
-    return await model.ainvoke([SystemMessage(content=system_prompt)] + _messages_for_llm(state))
+    return await model.ainvoke([SystemMessage(content=system_blocks)] + _messages_for_llm(state))
 
 
-def _build_system_prompt(state: AgentState, node_prompt: str, data_payload: dict | None = None) -> str:
+def _build_system_prompt(state: AgentState, node_prompt: str, data_payload: dict | None = None) -> list[dict]:
+    """Return system prompt as content blocks with cache_control on the stable prefix.
+
+    The stable block (app_context + data_dictionary + node_prompt) is identical
+    across all iterations of the same node type, so Anthropic caches it and serves
+    subsequent calls at ~10% of normal input-token cost. The volatile block
+    (runtime context) always changes and is never marked for caching.
+    """
     context = {
         "latest_user_message": _latest_human_message_content(state),
         "current_year": state.get("current_year"),
@@ -504,19 +514,18 @@ def _build_system_prompt(state: AgentState, node_prompt: str, data_payload: dict
     }
     if data_payload is not None:
         context["gathered_data"] = data_payload
-    return f"""
-    Universal agent instructions:
-    {state.get("context", "")}
 
-    Data dictionary:
-    {data_dictionary}
+    stable = (
+        f"\n    Universal agent instructions:\n    {state.get('context', '')}\n\n"
+        f"    Data dictionary:\n    {data_dictionary}\n\n"
+        f"    Node instructions:\n    {node_prompt}"
+    )
+    volatile = f"\n\n    Runtime context:\n    {json.dumps(context, indent=2, default=str)}\n    "
 
-    Node instructions:
-    {node_prompt}
-
-    Runtime context:
-    {json.dumps(context, indent=2, default=str)}
-    """
+    return [
+        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": volatile},
+    ]
 
 
 def _log_tool_calls(label: str, message: AIMessage) -> None:
