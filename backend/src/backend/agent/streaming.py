@@ -261,6 +261,58 @@ def _events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
             events.extend(_status_events_from_tool_names(tool_names))
             events.append({"type": "thought", "content": f"Retrieved: {', '.join(retrieved)}"})
 
+    elif node_name == "react_node":
+        plan_status = state_update.get("plan_status", "")
+        react_itr = state_update.get("react_iterations", "?")
+
+        if plan_status == "needs_tools":
+            for msg in messages:
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                non_scrape = [tc for tc in tool_calls if tc.get("name") != _SCRAPE_TOOL_NAME]
+                if non_scrape:
+                    events.extend(_status_events_from_tool_calls(non_scrape))
+                    descs = [
+                        "{name}({args})".format(
+                            name=tc.get("name", ""),
+                            args=", ".join(f"{k}={v}" for k, v in (tc.get("args") or {}).items()),
+                        )
+                        for tc in non_scrape
+                    ]
+                    events.append({"type": "thought", "content": f"Requesting additional data (pass {react_itr}): {', '.join(descs)}"})
+        elif plan_status == "needs_scrape":
+            for msg in messages:
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                scrape_calls = [tc for tc in tool_calls if tc.get("name") == _SCRAPE_TOOL_NAME]
+                if scrape_calls:
+                    events.append({"type": "status", "text": GROUP_LABELS["web_scrape"]})
+                    topics = [tc.get("args", {}).get("topic", "") for tc in scrape_calls if tc.get("args", {}).get("topic")]
+                    desc = (f"Searching for more context (pass {react_itr}): {', '.join(topics)}" if topics
+                            else f"Web search queued (pass {react_itr})")
+                    events.append({"type": "thought", "content": desc})
+        elif plan_status == "needs_scrape_and_tools":
+            for msg in messages:
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                non_scrape = [tc for tc in tool_calls if tc.get("name") != _SCRAPE_TOOL_NAME]
+                scrape_calls = [tc for tc in tool_calls if tc.get("name") == _SCRAPE_TOOL_NAME]
+                if non_scrape:
+                    events.extend(_status_events_from_tool_calls(non_scrape))
+                    descs = [
+                        "{name}({args})".format(
+                            name=tc.get("name", ""),
+                            args=", ".join(f"{k}={v}" for k, v in (tc.get("args") or {}).items()),
+                        )
+                        for tc in non_scrape
+                    ]
+                    events.append({"type": "thought", "content": f"Requesting additional data (pass {react_itr}): {', '.join(descs)}"})
+                if scrape_calls:
+                    events.append({"type": "status", "text": GROUP_LABELS["web_scrape"]})
+                    topics = [tc.get("args", {}).get("topic", "") for tc in scrape_calls if tc.get("args", {}).get("topic")]
+                    desc = (f"Searching for more context (pass {react_itr}): {', '.join(topics)}" if topics
+                            else f"Web search queued (pass {react_itr})")
+                    events.append({"type": "thought", "content": desc})
+        elif plan_status == "ready_to_respond":
+            events.append({"type": "thought", "content": "Analysis complete — composing response"})
+
     elif node_name == "scrape_node":
         scrape_msgs = [m for m in messages if getattr(m, "name", None) == _SCRAPE_TOOL_NAME]
         if scrape_msgs:

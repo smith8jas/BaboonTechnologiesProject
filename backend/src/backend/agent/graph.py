@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import date
 from typing import Any, Literal
 
-from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
@@ -202,6 +202,8 @@ async def router(state: AgentState):
             "router_route": "end",
         }
 
+    print(f"[ROUTER] → {decision.route}{' (Deep Plan)' if decision.Deep_Plan else ''}")
+
     if decision.route == "plan_node":
         Deep_Plan = decision.Deep_Plan
         return {"router_route": "plan_node", "plan_iterations": 0, "previous_depth": decision.Deep_Plan}
@@ -283,6 +285,7 @@ async def react_node(state: AgentState):
     logger.info("React Node Activated")
     local_prompt = deep_react_prompt if Deep_Plan else react_prompt
     react_count = state.get("react_iterations", 0)
+    print(f"[REACT] Iteration {react_count + 1} | {'deep_react_prompt' if Deep_Plan else 'react_prompt'} active")
 
     if react_count >= DEFAULT_RECURSION_LIMIT - 2:
         return {
@@ -308,23 +311,27 @@ async def react_node(state: AgentState):
         has_scrape = any(tc.get("name") == _SCRAPE_TOOL_NAME for tc in tool_calls)
         has_non_scrape = any(tc.get("name") != _SCRAPE_TOOL_NAME for tc in tool_calls)
         if has_scrape and has_non_scrape:
+            print("[REACT] → needs_scrape_and_tools")
             return {
                 "messages": [react_message],
                 "plan_status": "needs_scrape_and_tools",
                 "react_iterations": next_count,
             }
         if has_scrape:
+            print("[REACT] → needs_scrape")
             return {
                 "messages": [react_message],
                 "plan_status": "needs_scrape",
                 "react_iterations": next_count,
             }
+        print("[REACT] → needs_tools")
         return {
             "messages": [react_message],
             "plan_status": "needs_tools",
             "react_iterations": next_count,
         }
 
+    print("[REACT] → ready_to_respond")
     return {"plan_status": "ready_to_respond", "react_iterations": next_count}
 
 
@@ -332,6 +339,7 @@ async def tools_node(state: AgentState):
     """Execute planned tool calls and merge their cache updates into state."""
     logger.info("Tools Node Activated")
     tool_calls = [tc for tc in _latest_tool_calls(state) if tc.get("name") != _SCRAPE_TOOL_NAME]
+    print(f"[TOOLS] Executing {len(tool_calls)} tool call(s)")
     grouped_calls = _group_calls_by_ticker(tool_calls)
     base_cache = state_cache(state)
     messages: list[ToolMessage] = []
@@ -429,8 +437,7 @@ async def scrape_node(state: AgentState):
             preferred_source_types = []
             avoid = []
 
-        print(f"[SCRAPE] Expanded to {len(queries)} quer(ies): {queries}")
-        print(f"[SCRAPE] goal={research_goal!r}  preferred={preferred_source_types}  avoid={avoid}")
+        print(f"[SCRAPE] Expanded to {len(queries)} quer(ies)")
 
         async def _run_query(query: str) -> tuple[str, list, Exception | None]:
             try:
@@ -456,7 +463,6 @@ async def scrape_node(state: AgentState):
                 continue
             print(f"[SCRAPE] Query {query!r}: {len(hits)} hit(s) returned")
             for r in hits:
-                print(f"[SCRAPE]   [{r.confidence:.3f}] [{r.source_type}] {r.title[:55]}  {r.url[:65]}")
                 entry = {
                     "query": query,
                     "url": r.url,
@@ -526,6 +532,7 @@ async def _invoke_scrape_decision(state: AgentState, topic: str) -> ScrapeDecisi
 async def response_node(state: AgentState):
     """Generate the final user-facing answer from messages and cached data."""
     logger.info("Response Node Activated")
+    print("[RESPONSE] Generating final answer...")
     local_prompt = deep_response_prompt if Deep_Plan else response_prompt
     payload = build_data_payload(state_cache(state))
     if guidance := state.get("tool_guidance"):
