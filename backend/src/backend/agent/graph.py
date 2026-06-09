@@ -27,6 +27,8 @@ from .prompts import (
     router_prompt,
     plan_prompt,
     deep_plan_prompt,
+    react_prompt,
+    deep_react_prompt,
     response_prompt,
     deep_response_prompt,
     scrape_prompt
@@ -93,6 +95,7 @@ def initialize_agent():
     agent_builder.add_node("plan_node", plan_node)
     agent_builder.add_node("tools", tools_node)
     agent_builder.add_node("scrape_node", scrape_node)
+    agent_builder.add_node("react_node", react_node)
     agent_builder.add_node("response_node", response_node)
 
     agent_builder.add_edge(START, "router")
@@ -102,8 +105,13 @@ def initialize_agent():
         _route_after_plan,
         {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
     )
-    agent_builder.add_edge("tools", "plan_node")
-    agent_builder.add_edge("scrape_node", "plan_node")
+    agent_builder.add_edge("tools", "react_node")
+    agent_builder.add_edge("scrape_node", "react_node")
+    agent_builder.add_conditional_edges(
+        "react_node",
+        _route_after_react,
+        {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
+    )
     agent_builder.add_edge("response_node", END)
 
     return agent_builder.compile(checkpointer=MemorySaver())
@@ -207,19 +215,10 @@ async def router(state: AgentState):
 
 
 async def plan_node(state: AgentState):
-    """Ask the model for the next tool calls or a ready-to-answer signal."""
+    """Generate the initial tool call batch and write planning guidance for react_node."""
     logger.info("Plan Node Activated")
     local_prompt = deep_plan_prompt if Deep_Plan else plan_prompt
     print(f"[PLAN] {'deep_plan_prompt' if Deep_Plan else 'plan_prompt'} active")
-    plan_count = state.get("plan_iterations", 0)
-
-    if plan_count >= DEFAULT_RECURSION_LIMIT - 2:
-        return {
-            "plan_status": "ready_to_respond",
-            "forced_response_due_to_recursion": True,
-        }
-
-    next_count = plan_count + 1
 
     try:
         plan_message = await _invoke_llm(state, local_prompt, use_tools=True)
@@ -227,11 +226,26 @@ async def plan_node(state: AgentState):
         return {
             "messages": [AIMessage(content=f"I could not create a valid tool plan: {exc}")],
             "plan_status": "ready_to_respond",
-            "plan_iterations": next_count,
+            "plan_iterations": 1,
         }
+
+    # Extract planning rationale text (written before tool calls) as tool_guidance
+    content = plan_message.content
+    if isinstance(content, str):
+        guidance_text = content.strip()
+    elif isinstance(content, list):
+        text_parts = [
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        guidance_text = " ".join(text_parts).strip()
+    else:
+        guidance_text = ""
 
     _log_tool_calls("Execution Plan", plan_message)
     tool_calls = getattr(plan_message, "tool_calls", None) or []
+
     if tool_calls:
         has_scrape = any(tc.get("name") == _SCRAPE_TOOL_NAME for tc in tool_calls)
         has_non_scrape = any(tc.get("name") != _SCRAPE_TOOL_NAME for tc in tool_calls)
@@ -239,21 +253,79 @@ async def plan_node(state: AgentState):
             return {
                 "messages": [plan_message],
                 "plan_status": "needs_scrape_and_tools",
-                "plan_iterations": next_count,
+                "plan_iterations": 1,
+                "tool_guidance": guidance_text,
             }
         if has_scrape:
             return {
                 "messages": [plan_message],
                 "plan_status": "needs_scrape",
-                "plan_iterations": next_count,
+                "plan_iterations": 1,
+                "tool_guidance": guidance_text,
             }
         return {
             "messages": [plan_message],
             "plan_status": "needs_tools",
-            "plan_iterations": next_count,
+            "plan_iterations": 1,
+            "tool_guidance": guidance_text,
         }
 
-    return {"plan_status": "ready_to_respond", "plan_iterations": next_count}
+    # No tool calls generated — fall through directly to response
+    return {
+        "plan_status": "ready_to_respond",
+        "plan_iterations": 1,
+        "tool_guidance": guidance_text,
+    }
+
+
+async def react_node(state: AgentState):
+    """Evaluate tool results and decide whether more tools are needed or data is sufficient."""
+    logger.info("React Node Activated")
+    local_prompt = deep_react_prompt if Deep_Plan else react_prompt
+    react_count = state.get("react_iterations", 0)
+
+    if react_count >= DEFAULT_RECURSION_LIMIT - 2:
+        return {
+            "plan_status": "ready_to_respond",
+            "forced_response_due_to_recursion": True,
+        }
+
+    next_count = react_count + 1
+
+    try:
+        react_message = await _invoke_llm(state, local_prompt, use_tools=True)
+    except Exception as exc:
+        return {
+            "messages": [AIMessage(content=f"I could not evaluate tool results: {exc}")],
+            "plan_status": "ready_to_respond",
+            "react_iterations": next_count,
+        }
+
+    _log_tool_calls("React Decision", react_message)
+    tool_calls = getattr(react_message, "tool_calls", None) or []
+
+    if tool_calls:
+        has_scrape = any(tc.get("name") == _SCRAPE_TOOL_NAME for tc in tool_calls)
+        has_non_scrape = any(tc.get("name") != _SCRAPE_TOOL_NAME for tc in tool_calls)
+        if has_scrape and has_non_scrape:
+            return {
+                "messages": [react_message],
+                "plan_status": "needs_scrape_and_tools",
+                "react_iterations": next_count,
+            }
+        if has_scrape:
+            return {
+                "messages": [react_message],
+                "plan_status": "needs_scrape",
+                "react_iterations": next_count,
+            }
+        return {
+            "messages": [react_message],
+            "plan_status": "needs_tools",
+            "react_iterations": next_count,
+        }
+
+    return {"plan_status": "ready_to_respond", "react_iterations": next_count}
 
 
 async def tools_node(state: AgentState):
@@ -456,6 +528,8 @@ async def response_node(state: AgentState):
     logger.info("Response Node Activated")
     local_prompt = deep_response_prompt if Deep_Plan else response_prompt
     payload = build_data_payload(state_cache(state))
+    if guidance := state.get("tool_guidance"):
+        payload = {**payload, "analysis_plan": guidance}
     try:
         response_message = await _invoke_llm(state, local_prompt, data_payload=payload)
     except Exception as exc:
@@ -473,6 +547,18 @@ def _route_after_router(state: AgentState) -> str:
 
 def _route_after_plan(state: AgentState):
     """Route to tools, scraping, or response based on the latest plan status."""
+    status = state.get("plan_status")
+    if status == "needs_scrape_and_tools":
+        return [Send("scrape_node", state), Send("tools", state)]
+    if status == "needs_scrape":
+        return "scrape_node"
+    if status == "needs_tools":
+        return "tools"
+    return "response_node"
+
+
+def _route_after_react(state: AgentState):
+    """Route to tools, scraping, or response based on the react evaluation."""
     status = state.get("plan_status")
     if status == "needs_scrape_and_tools":
         return [Send("scrape_node", state), Send("tools", state)]
@@ -511,6 +597,7 @@ def _build_system_prompt(state: AgentState, node_prompt: str, data_payload: dict
         "cached_data_catalog": state.get("data_catalog", empty_data_catalog()),
         "forced_response_due_to_recursion": state.get("forced_response_due_to_recursion", False),
         "scrape_history": state.get("scrape_history", [])[-20:],
+        "tool_guidance": state.get("tool_guidance", ""),
     }
     if data_payload is not None:
         context["gathered_data"] = data_payload
