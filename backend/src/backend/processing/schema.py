@@ -69,6 +69,14 @@ class IncomeStatement(BaseModel):
             return self.ebit - self.tax_expense
         return None
 
+    @computed_field
+    @property
+    def ebitda(self) -> float | None:
+        if self.ebit is not None and self.depreciation_expense is not None:
+            return self.ebit + self.depreciation_expense
+        return None
+
+
 class BalanceSheet(BaseModel):
     total_current_assets:               float | None = None
     cash:                               float | None = None
