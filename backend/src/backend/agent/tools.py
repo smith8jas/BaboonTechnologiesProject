@@ -53,7 +53,7 @@ def _log_cache_status(tool_name: str, was_cached: bool, **kwargs) -> None:
 def get_financials(
     ticker: str,
     span: int = 5,
-    fiscal_years: list[int] | None = None,
+    fiscal_years: list[int] = None,
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """
@@ -73,7 +73,12 @@ def get_financials(
         _tool_cache(data_cache), ticker, int(span), fiscal_years
     )
     _log_cache_status("get_financials", was_cached, ticker=ticker, span=span, fiscal_years=fiscal_years)
-    return {"source": "cache" if was_cached else "external", "data": result.model_dump(mode="json")}
+    return {
+        "source": "cache" if was_cached else "external",
+        "ticker": result.ticker,
+        "periods_retrieved": len(result.periods),
+        "fiscal_years": [p.fiscal_year for p in result.periods],
+    }
 
 
 @tool
@@ -94,18 +99,30 @@ def get_market_data(
     """
     result, was_cached = get_or_fetch_market_data(_tool_cache(data_cache), ticker, include_rfr)
     _log_cache_status("get_market_data", was_cached, ticker=ticker, include_rfr=include_rfr)
-    return {"source": "cache" if was_cached else "external", "data": result.model_dump(mode="json")}
+    return {
+        "source": "cache" if was_cached else "external",
+        "ticker": ticker,
+        "current_price": result.current_price,
+        "market_cap": result.market_cap,
+        "beta": result.beta,
+        "risk_free_rate": result.risk_free_rate,
+    }
 
 
 @tool
 def get_sector_data(
-    year,
+    year: int,
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Pull sector-level financial assumptions for a given year."""
     result, was_cached = get_or_fetch_sector_data(_tool_cache(data_cache), year)
     _log_cache_status("get_sector_data", was_cached, year=year)
-    return {"source": "cache" if was_cached else "external", "data": result.model_dump(mode="json")}
+    return {
+        "source": "cache" if was_cached else "external",
+        "year": year,
+        "equity_risk_premium": result.equity_risk_premium,
+        "long_term_growth_rate": result.long_term_growth_rate,
+    }
 
 
 @tool
@@ -244,7 +261,7 @@ def scrape_web(
 def run_dcf_valuation(
     ticker: str,
     span: int = 5,
-    year: int | None = None,
+    year: int = 0,
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Run a full DCF valuation for a public company ticker."""
@@ -253,7 +270,12 @@ def run_dcf_valuation(
     _log_cache_status("run_dcf_valuation", was_cached, ticker=ticker, span=span, year=year)
     return {
         "source": "cache" if was_cached else "external",
-        "data": DCFOutput.model_validate(result).model_dump(mode="json"),
+        "ticker": ticker,
+        "fiscal_year": result.get("fiscal_year"),
+        "projection_years": result.get("projection_years"),
+        "intrinsic_value_per_share": result.get("intrinsic_value_per_share"),
+        "enterprise_value": result.get("enterprise_value"),
+        "tv_pct_of_ev": result.get("tv_pct_of_ev"),
     }
 
 
