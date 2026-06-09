@@ -20,6 +20,7 @@ CACHE_SECTOR_DATA_BY_YEAR = "sector_data_by_year"
 CACHE_GROWTH = "growth"
 CACHE_RATIOS = "ratios"
 CACHE_DCF = "dcf"
+CACHE_COMPARABLES = "comparables"
 CACHE_SCENARIOS = "scenarios"
 
 SUBDOMAIN_INCOME_STATEMENT = "income_statement"

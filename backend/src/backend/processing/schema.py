@@ -1,8 +1,9 @@
 from datetime import date
 import warnings
 from pydantic import (
-    BaseModel, 
-    computed_field, 
+    BaseModel,
+    computed_field,
+    field_validator,
     model_validator,
     ConfigDict,
 )
@@ -13,8 +14,18 @@ class CompanyMetadata(BaseModel):
     cik: str
     name: str
 
-    sic: str | None = None
+    sic: int | None = None
     industry: str | None = None              # this IS the SIC description
+
+    @field_validator("sic", mode="before")
+    @classmethod
+    def _coerce_sic(cls, v):
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
 
     fiscal_year_end: str | None = None
     entity_type: str | None = None

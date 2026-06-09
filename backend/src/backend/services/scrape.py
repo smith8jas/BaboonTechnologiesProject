@@ -25,6 +25,16 @@ _SOURCE_TYPE_PATTERNS: dict[str, list[str]] = {
     "investor relations":    ["/investor", "ir.", "investors."],
 }
 
+_DEFAULT_AVOID_PATTERNS = [
+    "reddit.com",
+    "twitter.com",
+    "x.com",
+    "stocktwits.com",
+    "discord.com",
+    "quora.com",
+    "wikipedia.org",
+]
+
 
 @dataclass
 class ScrapeResult:
@@ -56,7 +66,7 @@ async def search_and_scrape_async(
         preferred_source_types: Source categories that get a confidence bonus
             when matched (e.g. "SEC filing", "news article").
     """
-    avoid_lower = [a.lower() for a in (avoid or [])]
+    avoid_lower = [a.lower() for a in [*_DEFAULT_AVOID_PATTERNS, *(avoid or [])]]
     preferred_lower = [p.lower() for p in (preferred_source_types or [])]
 
     print(f"[SCRAPE] search_and_scrape_async: {query!r}  max_results={max_results}")

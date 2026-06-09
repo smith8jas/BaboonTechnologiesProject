@@ -1,4 +1,6 @@
 #Run this to test the agent from the terminal
+#cd backend
+#uv run python src/backend/agent/main.py
 
 import sys
 from pathlib import Path
@@ -72,6 +74,6 @@ def save_graph_png(agent):
 if __name__ == "__main__":
 
     agent = initialize_agent()
-    save_graph_png(agent)
+    #save_graph_png(agent)
 
     chatbot(agent)

@@ -1,14 +1,12 @@
 """LangChain tools exposed to the agent graph."""
 
 import logging
-from typing import Annotated, Dict
+from typing import Annotated, Optional
 from datetime import date
 
 from langchain_core.tools import InjectedToolArg, tool
 
-from backend.processing.schema import DCFOutput, HistoricalFinancials, MarketData, SectorData
 from backend.services.scrape import search_and_scrape
-from backend.services.comparables import get_comps_valuation
 from .cache import (
     get_or_calculate_dcf,
     get_or_calculate_growth,
@@ -17,6 +15,8 @@ from .cache import (
     get_or_fetch_market_data,
     get_or_fetch_sector_data,
     empty_data_cache,
+    get_or_calculate_damodaran_fallback,
+    get_or_calculate_peer_comps
 )
 from .cache_schema import (
     PHASE_CALCULATION,
@@ -278,6 +278,35 @@ def run_dcf_valuation(
         "enterprise_value": result.get("enterprise_value"),
         "tv_pct_of_ev": result.get("tv_pct_of_ev"),
     }
+
+@tool
+def get_comps_valuation(
+    ticker: str,
+    peers: Optional[list[str]] = None,
+    data_cache: Annotated[dict, InjectedToolArg] = None,
+) -> dict:
+    """
+    Comparable company valuation for a given ticker.
+
+    - With peers: computes P/E, EV/EBITDA, EV/Sales, P/S, P/B against
+      the supplied peer tickers and returns an implied equity value band.
+    - Without peers: falls back to Damodaran sector median multiples
+      (EV/Sales, P/S, Trailing PE) derived from the company's SIC code.
+
+    Always returns a value band, never a single point estimate.
+    Does not issue Buy / Hold / Sell recommendations.
+
+    Args:
+        ticker: Target company ticker (e.g. "AAPL").
+        peers:  Optional list of peer tickers (e.g. ["MSFT", "GOOGL"]).
+    """
+    cache = _tool_cache(data_cache)
+    if peers:
+        result, was_cached = get_or_calculate_peer_comps(cache, ticker, peers)
+    else:
+        result, was_cached = get_or_calculate_damodaran_fallback(cache, ticker)
+    _log_cache_status("get_comps_valuation", was_cached, ticker=ticker)
+    return result
 
 
 TOOL_SPECS = [

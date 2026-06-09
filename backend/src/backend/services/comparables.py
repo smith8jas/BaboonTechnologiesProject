@@ -3,7 +3,7 @@ services/comparables.py
 Comparable company analysis — peer-based multiples and Damodaran sector fallback.
 
 Data files required (commit to repo):
-  data/sic_to_damodaran.csv  — SIC int → Damodaran industry name
+  backend/data/sic.csv  — SIC int → Damodaran industry name
 
 Schema dependency:
   CompanyMetadata must include `sic: Optional[int]`.
@@ -20,24 +20,22 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from langchain_core.tools import tool
 
 from backend.adapters.damodaran import fetch_ev_sales, fetch_price_sales, fetch_trailing_pe
 from backend.processing.schema import HistoricalFinancials, MarketData
-from backend.services.financials import get_financials, get_market_data
 
 # ---------------------------------------------------------------------------
 # SIC → Damodaran industry map
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = Path(__file__).resolve().parents[3] / "data"
+_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 _sic_map: dict[int, str] | None = None
 
 
 def _load_sic_map() -> dict[int, str]:
     global _sic_map
     if _sic_map is None:
-        df = pd.read_csv(_DATA_DIR / "sic_to_damodaran.csv")
+        df = pd.read_csv(_DATA_DIR / "sic.csv")
         _sic_map = dict(zip(df["SIC Code"].astype(int), df["Damodaran Industry"]))
     return _sic_map
 
@@ -199,17 +197,18 @@ def _value_band(implied: dict[str, float | None]) -> dict:
 # Path A — peer-based comps
 # ---------------------------------------------------------------------------
 
-def _peer_comps(ticker: str, peers: list[str]) -> dict:
-    target_fin = get_financials(ticker)
-    target_mkt = get_market_data(ticker)
+def peer_comps(cache: dict, ticker: str, peers: list[str]) -> dict:
+    from backend.agent.cache import get_or_fetch_financials, get_or_fetch_market_data
+    target_fin, _ = get_or_fetch_financials(cache, ticker)
+    target_mkt, _ = get_or_fetch_market_data(cache, ticker)
 
     peer_results: list[dict] = []
     dropped: list[dict] = []
 
     for peer in peers:
         try:
-            peer_fin = get_financials(peer)
-            peer_mkt = get_market_data(peer)
+            peer_fin, _ = get_or_fetch_financials(cache, peer)
+            peer_mkt, _ = get_or_fetch_market_data(cache, peer)
             result = _compute_multiples(peer_fin, peer_mkt)
             result["ticker"] = peer
             peer_results.append(result)
@@ -240,9 +239,10 @@ def _peer_comps(ticker: str, peers: list[str]) -> dict:
 # Path B — Damodaran sector fallback
 # ---------------------------------------------------------------------------
 
-def _damodaran_fallback(ticker: str) -> dict:
-    fin = get_financials(ticker)
-    mkt = get_market_data(ticker)
+def damodaran_fallback(cache: dict, ticker: str) -> dict:
+    from backend.agent.cache import get_or_fetch_financials, get_or_fetch_market_data
+    fin, _ = get_or_fetch_financials(cache, ticker)
+    mkt, _ = get_or_fetch_market_data(cache, ticker)
 
     sic: int | None = getattr(fin.metadata, "sic", None)
     if sic is None:
@@ -258,7 +258,7 @@ def _damodaran_fallback(ticker: str) -> dict:
 
     industry = _damodaran_industry(sic)
     if industry is None:
-        return {"error": f"SIC {sic} unmapped — extend sic_to_damodaran.csv", "notes": notes}
+        return {"error": f"SIC {sic} unmapped — extend sic.csv", "notes": notes}
 
     sector_ev_sales = fetch_ev_sales(industry)
     sector_ps       = fetch_price_sales(industry)
@@ -298,32 +298,3 @@ def _damodaran_fallback(ticker: str) -> dict:
         "current_price":           mkt.current_price,
         "notes":                   notes,
     }
-
-
-# ---------------------------------------------------------------------------
-# Public @tool  (import in agent/tools.py)
-# ---------------------------------------------------------------------------
-
-@tool
-def get_comps_valuation(
-    ticker: str,
-    peers: Optional[list[str]] = None,
-) -> dict:
-    """
-    Comparable company valuation for a given ticker.
-
-    - With peers: computes P/E, EV/EBITDA, EV/Sales, P/S, P/B against
-      the supplied peer tickers and returns an implied equity value band.
-    - Without peers: falls back to Damodaran sector median multiples
-      (EV/Sales, P/S, Trailing PE) derived from the company's SIC code.
-
-    Always returns a value band, never a single point estimate.
-    Does not issue Buy / Hold / Sell recommendations.
-
-    Args:
-        ticker: Target company ticker (e.g. "AAPL").
-        peers:  Optional list of peer tickers (e.g. ["MSFT", "GOOGL"]).
-    """
-    if peers:
-        return _peer_comps(ticker, peers)
-    return _damodaran_fallback(ticker)

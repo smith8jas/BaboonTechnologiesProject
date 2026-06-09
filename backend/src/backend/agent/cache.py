@@ -10,10 +10,11 @@ from typing import Any
 from pydantic import BaseModel
 
 from backend.processing.schema import HistoricalFinancials, MarketData, SectorData
-from backend.services import dcf_engine, financials, growth, ratio
+from backend.services import dcf_engine, financials, growth, ratio, comparables
 from .cache_schema import (
     CACHE_CALCULATED,
     CACHE_COMPANIES,
+    CACHE_COMPARABLES,
     CACHE_DCF,
     CACHE_FINANCIALS,
     CACHE_GLOBAL,
@@ -114,6 +115,14 @@ def build_data_catalog(cache: dict[str, Any]) -> dict[str, Any]:
                 for scenario, data in dcf_entry.items()
             }
 
+        comps_entry = calculated.get(CACHE_COMPARABLES, {})
+        if comps_entry:
+            entry[CACHE_CALCULATED][CACHE_COMPARABLES] = {
+                key: {"available": True}
+                for key in ("peer", "damodaran")
+                if comps_entry.get(key)
+            }
+
         catalog[CACHE_COMPANIES].append(entry)
 
     sector_years = sorted((cache.get(CACHE_GLOBAL, {}).get(CACHE_SECTOR_DATA_BY_YEAR) or {}).keys())
@@ -166,6 +175,14 @@ def build_data_payload(cache: dict[str, Any]) -> dict[str, Any]:
                 scenario: data["payload"]
                 for scenario, data in dcf_scenarios.items()
                 if data.get("payload") is not None
+            }
+
+        comps_entry = calculated.get(CACHE_COMPARABLES, {})
+        if comps_entry:
+            entry[CACHE_COMPARABLES] = {
+                key: data["payload"]
+                for key in ("peer", "damodaran")
+                if (data := comps_entry.get(key)) and data.get("payload") is not None
             }
 
         if entry:
@@ -345,6 +362,48 @@ def get_or_calculate_dcf(
             CACHE_FINANCIALS: _financials_coverage(hf, span),
             "sector_year": int(year),
         },
+        "last_updated": _now(),
+    }
+    return payload, False
+
+def get_or_calculate_peer_comps(
+    cache: dict[str, Any],
+    ticker: str,
+    peers: list[str],
+) -> tuple[dict[str, Any], bool]:
+    """Return cached peer comps for this exact peer set, or compute and store them."""
+    company = _company(cache, ticker)
+    comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
+    peer_key = ",".join(sorted(p.strip().upper() for p in peers))
+    cached = comps_cache.get("peer")
+    if cached and cached.get("peer_key") == peer_key:
+        return cached["payload"], True
+
+    payload = comparables.peer_comps(cache, ticker, peers)
+    comps_cache["peer"] = {
+        "payload": payload,
+        "peer_key": peer_key,
+        "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
+        "last_updated": _now(),
+    }
+    return payload, False
+
+
+def get_or_calculate_damodaran_fallback(
+    cache: dict[str, Any],
+    ticker: str,
+) -> tuple[dict[str, Any], bool]:
+    """Return cached Damodaran sector fallback, or compute and store it."""
+    company = _company(cache, ticker)
+    comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
+    cached = comps_cache.get("damodaran")
+    if cached:
+        return cached["payload"], True
+
+    payload = comparables.damodaran_fallback(cache, ticker)
+    comps_cache["damodaran"] = {
+        "payload": payload,
+        "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
         "last_updated": _now(),
     }
     return payload, False
