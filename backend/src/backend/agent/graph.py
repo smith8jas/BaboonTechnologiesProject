@@ -204,7 +204,7 @@ async def router(state: AgentState):
 
     if decision.route == "plan_node":
         Deep_Plan = decision.Deep_Plan
-        return {"router_route": "plan_node", "plan_iterations": 0}
+        return {"router_route": "plan_node", "plan_iterations": 0, "previous_depth": decision.Deep_Plan}
 
     Deep_Plan = False
     answer = decision.answer or "I can help with public-company valuation and financial analysis. What company or ticker would you like to analyze?"
@@ -597,6 +597,7 @@ def _build_system_prompt(state: AgentState, node_prompt: str, data_payload: dict
         "cached_data_catalog": state.get("data_catalog", empty_data_catalog()),
         "forced_response_due_to_recursion": state.get("forced_response_due_to_recursion", False),
         "scrape_history": state.get("scrape_history", [])[-20:],
+        "previous_depth": state.get("previous_depth"),
     }
     if data_payload is not None:
         context["gathered_data"] = data_payload

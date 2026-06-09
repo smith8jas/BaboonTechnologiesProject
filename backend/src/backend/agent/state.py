@@ -36,3 +36,4 @@ class AgentState(TypedDict):
     data_catalog: NotRequired[dict[str, Any]]
     scrape_history: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
     tool_guidance: NotRequired[str]
+    previous_depth: NotRequired[bool]
