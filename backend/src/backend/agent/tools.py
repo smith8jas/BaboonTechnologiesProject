@@ -8,6 +8,7 @@ from langchain_core.tools import InjectedToolArg, tool
 
 from backend.processing.schema import DCFOutput, HistoricalFinancials, MarketData, SectorData
 from backend.services.scrape import search_and_scrape
+from backend.services.comparables import get_comps_valuation
 from .cache import (
     get_or_calculate_dcf,
     get_or_calculate_growth,
@@ -356,6 +357,13 @@ TOOL_SPECS = [
         route="scrape",
         capability="Search the web and scrape recent news, events, or qualitative context on a financial topic. Use for information not available in structured financial statements.",
         phase=PHASE_RESEARCH,
+    ),
+    ToolSpec(
+        tool=get_comps_valuation,
+        group="comparables",
+        route="comparables",
+        capability="Run comparable company valuation for a ticker. With peers: computes P/E, EV/EBITDA, EV/Sales, P/S, P/B multiples and returns an implied value band. Without peers: falls back to Damodaran sector median multiples using the company's SIC code.",
+        phase=PHASE_CALCULATION,
     ),
 ]
 
