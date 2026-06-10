@@ -576,6 +576,18 @@ def _route_after_react(state: AgentState):
     return "response_node"
 
 
+def _should_force_response(config: dict[str, Any]) -> bool:
+    """Return True when the current turn is close to its recursion budget."""
+    current_step = (config.get("metadata") or {}).get("langgraph_step")
+    if current_step is None:
+        return False
+
+    turn_start_step = (config.get("configurable") or {}).get("turn_start_step", -1)
+    recursion_limit = int(config.get("recursion_limit") or DEFAULT_RECURSION_LIMIT)
+    turn_step = int(current_step) - int(turn_start_step)
+    return turn_step >= recursion_limit - 2
+
+
 
 async def _invoke_llm(state: AgentState, prompt: str, use_tools: bool = False, data_payload: dict | None = None) -> AIMessage:
     system_blocks = _build_system_prompt(state, prompt, data_payload=data_payload)

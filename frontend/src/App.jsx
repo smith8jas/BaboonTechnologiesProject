@@ -1,17 +1,28 @@
 import React from 'react';
 
-import { checkHealth, streamChatMessage } from './api/client.js';
+import {
+  checkHealth,
+  createChatSession,
+  deleteChatSession,
+  getMe,
+  listChatMessages,
+  listChatSessions,
+  streamChatMessage,
+  updateMe,
+} from './api/client.js';
+import { useAuth } from './auth/AuthProvider.jsx';
 import Navbar from './components/Navbar.jsx';
+import AuthPage from './pages/AuthPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import LandingPage from './pages/LandingPage.jsx';
+import ProfilePage from './pages/ProfilePage.jsx';
 
-const STORAGE_KEY = 'baboon-chat-state';
 const THEME_KEY = 'baboon-theme';
 
 function createInitialMessages() {
   return [
     {
-      id: crypto.randomUUID(),
+      id: 'intro-message',
       role: 'assistant',
       content: 'Bring me a public company and I will build the investment case from the data.',
       timestamp: new Date().toISOString(),
@@ -19,77 +30,48 @@ function createInitialMessages() {
   ];
 }
 
-function createSession(overrides = {}) {
-  const messages = overrides.messages ?? createInitialMessages();
-  const updatedAt = overrides.updatedAt ?? latestMessageTimestamp(messages);
-
-  return {
-    id: overrides.id ?? crypto.randomUUID(),
-    title: overrides.title ?? sessionTitle(messages),
-    threadId: overrides.threadId ?? null,
-    messages,
-    updatedAt,
-  };
-}
-
-function loadState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
-
-    // Current persistence format: multiple named research sessions.
-    if (saved?.sessions?.length) {
-      return {
-        activeSessionId: saved.activeSessionId ?? saved.sessions[0].id,
-        sessions: saved.sessions,
-      };
-    }
-
-    // Migration path for earlier builds that stored a single message list.
-    if (saved?.messages?.length) {
-      const session = createSession({
-        threadId: saved.threadId,
-        messages: saved.messages,
-      });
-
-      return {
-        activeSessionId: session.id,
-        sessions: [session],
-      };
-    }
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
-  }
-
-  const session = createSession();
-  return {
-    activeSessionId: session.id,
-    sessions: [session],
-  };
-}
-
 function latestMessageTimestamp(messages) {
   return messages[messages.length - 1]?.timestamp ?? new Date().toISOString();
 }
 
-function sessionTitle(messages) {
-  const firstUserMessage = messages.find((message) => message.role === 'user');
-  const source = firstUserMessage?.content ?? 'New research thread';
-  return source.length > 42 ? `${source.slice(0, 39)}...` : source;
+function sessionTitle(source) {
+  const text = source?.trim() || 'New research thread';
+  return text.length > 42 ? `${text.slice(0, 39)}...` : text;
 }
 
-function updateSessionMetadata(session) {
+function normalizeSession(row) {
+  return {
+    id: row.id,
+    title: row.title || 'New research thread',
+    threadId: row.thread_id ?? null,
+    updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+  };
+}
+
+function normalizeMessage(row) {
+  return {
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    timestamp: row.created_at,
+  };
+}
+
+function updateSessionMetadata(session, messages) {
   return {
     ...session,
-    title: sessionTitle(session.messages),
-    updatedAt: latestMessageTimestamp(session.messages),
+    title: session.title === 'New research thread' ? sessionTitle(messages.find((m) => m.role === 'user')?.content) : session.title,
+    updatedAt: latestMessageTimestamp(messages),
   };
 }
 
 export default function App() {
-  const [initialChatState] = React.useState(loadState);
+  const auth = useAuth();
   const [path, setPath] = React.useState(() => window.location.pathname);
-  const [activeSessionId, setActiveSessionId] = React.useState(initialChatState.activeSessionId);
-  const [sessions, setSessions] = React.useState(initialChatState.sessions);
+  const [activeSessionId, setActiveSessionId] = React.useState(null);
+  const [sessions, setSessions] = React.useState([]);
+  const [messagesBySessionId, setMessagesBySessionId] = React.useState({});
+  const [profile, setProfile] = React.useState(null);
   const [draft, setDraft] = React.useState('');
   const [isSending, setIsSending] = React.useState(false);
   const [apiStatus, setApiStatus] = React.useState('checking');
@@ -99,9 +81,11 @@ export default function App() {
   });
   const messagesEndRef = React.useRef(null);
 
-  const activePath = path === '/chat' ? '/chat' : '/';
-  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
-  const messages = activeSession?.messages ?? [];
+  const activePath = ['/chat', '/login', '/signup', '/profile'].includes(path) ? path : '/';
+  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
+  const emptyMessages = React.useMemo(createInitialMessages, [activeSessionId, auth.user?.id]);
+  const persistedMessages = activeSession ? messagesBySessionId[activeSession.id] ?? [] : [];
+  const messages = persistedMessages.length > 0 ? persistedMessages : emptyMessages;
 
   React.useEffect(() => {
     function handlePopState() {
@@ -111,10 +95,6 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
-
-  React.useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeSessionId, sessions }));
-  }, [activeSessionId, sessions]);
 
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -146,6 +126,121 @@ export default function App() {
     }
   }, [messages, isSending, activePath]);
 
+  React.useEffect(() => {
+    if (auth.loading) {
+      return;
+    }
+
+    if ((activePath === '/chat' || activePath === '/profile') && !auth.isAuthenticated) {
+      navigate('/login');
+    }
+
+    if ((activePath === '/login' || activePath === '/signup') && auth.isAuthenticated) {
+      navigate('/chat');
+    }
+  }, [activePath, auth.isAuthenticated, auth.loading]);
+
+  React.useEffect(() => {
+    if (!auth.accessToken) {
+      setSessions([]);
+      setMessagesBySessionId({});
+      setActiveSessionId(null);
+      setProfile(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadSessions() {
+      try {
+        const rows = await listChatSessions({ accessToken: auth.accessToken });
+        if (cancelled) {
+          return;
+        }
+        const normalized = rows.map(normalizeSession);
+        setSessions(normalized);
+        setActiveSessionId((current) => {
+          if (normalized.some((session) => session.id === current)) {
+            return current;
+          }
+          return normalized[0]?.id ?? null;
+        });
+      } catch {
+        if (!cancelled) {
+          setSessions([]);
+          setActiveSessionId(null);
+        }
+      }
+    }
+
+    loadSessions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken]);
+
+  React.useEffect(() => {
+    if (!auth.accessToken) {
+      setProfile(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadProfile() {
+      try {
+        const nextProfile = await getMe({ accessToken: auth.accessToken });
+        if (!cancelled) {
+          setProfile(nextProfile);
+        }
+      } catch {
+        if (!cancelled) {
+          setProfile(null);
+        }
+      }
+    }
+
+    loadProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken]);
+
+  React.useEffect(() => {
+    if (!auth.accessToken || !activeSessionId || messagesBySessionId[activeSessionId]) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadMessages() {
+      try {
+        const rows = await listChatMessages({
+          accessToken: auth.accessToken,
+          sessionId: activeSessionId,
+        });
+        if (!cancelled) {
+          setMessagesBySessionId((current) => ({
+            ...current,
+            [activeSessionId]: rows.map(normalizeMessage),
+          }));
+        }
+      } catch {
+        if (!cancelled) {
+          setMessagesBySessionId((current) => ({ ...current, [activeSessionId]: [] }));
+        }
+      }
+    }
+
+    loadMessages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, auth.accessToken, messagesBySessionId]);
+
   function toggleTheme() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   }
@@ -164,9 +259,38 @@ export default function App() {
     setPath(nextPath);
   }
 
-  function startNewChat() {
-    const session = createSession();
+  async function handleSignOut() {
+    await auth.signOut();
+    setDraft('');
+    setSessions([]);
+    setMessagesBySessionId({});
+    setActiveSessionId(null);
+    setProfile(null);
+    navigate('/');
+  }
+
+  async function saveProfile(profileDraft) {
+    const nextProfile = await updateMe({
+      accessToken: auth.accessToken,
+      profile: profileDraft,
+    });
+    setProfile(nextProfile);
+    return nextProfile;
+  }
+
+  async function startNewChat() {
+    if (!auth.isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+
+    const row = await createChatSession({
+      accessToken: auth.accessToken,
+      title: 'New research thread',
+    });
+    const session = normalizeSession(row);
     setSessions((current) => [session, ...current]);
+    setMessagesBySessionId((current) => ({ ...current, [session.id]: [] }));
     setActiveSessionId(session.id);
     setDraft('');
 
@@ -184,6 +308,63 @@ export default function App() {
     }
   }
 
+  async function removeSession(sessionId) {
+    const session = sessions.find((item) => item.id === sessionId);
+    const title = session?.title || 'this chat';
+    const confirmed = window.confirm(`Delete "${title}"? This will permanently remove the chat history.`);
+    if (!confirmed) {
+      return;
+    }
+
+    await deleteChatSession({
+      accessToken: auth.accessToken,
+      sessionId,
+    });
+
+    setMessagesBySessionId((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+
+    setSessions((current) => {
+      const nextSessions = current.filter((item) => item.id !== sessionId);
+      if (sessionId === activeSessionId) {
+        setActiveSessionId(nextSessions[0]?.id ?? null);
+      }
+      return nextSessions;
+    });
+  }
+
+  function updateMessages(sessionId, updater) {
+    setMessagesBySessionId((current) => ({
+      ...current,
+      [sessionId]: updater(current[sessionId] ?? []),
+    }));
+  }
+
+  function updateSession(sessionId, updater) {
+    setSessions((current) =>
+      current.map((session) => (session.id === sessionId ? updater(session) : session)),
+    );
+  }
+
+  async function ensureSessionForMessage(text) {
+    if (activeSession) {
+      return activeSession;
+    }
+
+    const row = await createChatSession({
+      accessToken: auth.accessToken,
+      title: sessionTitle(text),
+    });
+    const session = normalizeSession(row);
+    setSessions((current) => [session, ...current]);
+    setMessagesBySessionId((current) => ({ ...current, [session.id]: [] }));
+    setActiveSessionId(session.id);
+    return session;
+  }
+
   async function sendMessage(event, overrideText) {
     event?.preventDefault();
     const text = (overrideText ?? draft).trim();
@@ -192,18 +373,27 @@ export default function App() {
       return;
     }
 
-    const session = activeSession ?? createSession();
-    const sessionId = session.id;
-
-    if (!activeSession) {
-      setSessions((current) => [session, ...current]);
-      setActiveSessionId(sessionId);
+    if (!auth.isAuthenticated || !auth.accessToken) {
+      navigate('/login');
+      return;
     }
 
     if (path !== '/chat') {
       navigate('/chat');
     }
 
+    setDraft('');
+    setIsSending(true);
+
+    let session;
+    try {
+      session = await ensureSessionForMessage(text);
+    } catch (error) {
+      setIsSending(false);
+      throw error;
+    }
+
+    const sessionId = session.id;
     const userMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -211,8 +401,6 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
     const assistantMessageId = crypto.randomUUID();
-    // Insert a placeholder immediately so streamed status and deltas have
-    // a stable message to update in place.
     const assistantMessage = {
       id: assistantMessageId,
       role: 'assistant',
@@ -223,132 +411,87 @@ export default function App() {
       thoughts: [],
     };
 
-    setDraft('');
-    setIsSending(true);
-    setSessions((current) =>
-      current.map((currentSession) =>
-        currentSession.id === sessionId
-          ? updateSessionMetadata({
-              ...currentSession,
-              messages: [...currentSession.messages, userMessage, assistantMessage],
-            })
-          : currentSession,
-      ),
-    );
+    updateMessages(sessionId, (current) => [...current, userMessage, assistantMessage]);
+    updateSession(sessionId, (current) => updateSessionMetadata(current, [userMessage]));
 
     let streamedContent = '';
 
     try {
       await streamChatMessage({
+        accessToken: auth.accessToken,
         message: text,
+        sessionId,
         threadId: session.threadId,
-        onThreadId: (threadId) => {
-          setSessions((current) =>
-            current.map((currentSession) =>
-              currentSession.id === sessionId
-                ? {
-                    ...currentSession,
-                    threadId,
-                  }
-                : currentSession,
-            ),
-          );
+        onSessionId: (nextSessionId) => {
+          if (nextSessionId && nextSessionId !== sessionId) {
+            setActiveSessionId(nextSessionId);
+          }
         },
-        onStatus: (text) => {
-          setSessions((current) =>
-            current.map((currentSession) =>
-              currentSession.id === sessionId
-                ? {
-                    ...currentSession,
-                    messages: currentSession.messages.map((message) =>
-                      message.id === assistantMessageId ? { ...message, statusText: text } : message,
-                    ),
-                  }
-                : currentSession,
+        onThreadId: (threadId) => {
+          updateSession(sessionId, (current) => ({ ...current, threadId }));
+        },
+        onStatus: (statusText) => {
+          updateMessages(sessionId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId ? { ...message, statusText } : message,
             ),
           );
         },
         onThought: (thought) => {
-          setSessions((current) =>
-            current.map((currentSession) =>
-              currentSession.id === sessionId
-                ? {
-                    ...currentSession,
-                    messages: currentSession.messages.map((message) =>
-                      message.id === assistantMessageId
-                        ? { ...message, thoughts: [...(message.thoughts || []), thought] }
-                        : message,
-                    ),
-                  }
-                : currentSession,
+          updateMessages(sessionId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, thoughts: [...(message.thoughts || []), thought] }
+                : message,
             ),
           );
         },
         onDelta: (chunk) => {
           streamedContent += chunk;
-          setSessions((current) =>
-            current.map((currentSession) =>
-              currentSession.id === sessionId
-                ? updateSessionMetadata({
-                    ...currentSession,
-                    messages: currentSession.messages.map((message) =>
-                      message.id === assistantMessageId
-                        ? {
-                            ...message,
-                            content: streamedContent,
-                            statusText: '',
-                          }
-                        : message,
-                    ),
-                  })
-                : currentSession,
+          updateMessages(sessionId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    content: streamedContent,
+                    statusText: '',
+                  }
+                : message,
             ),
           );
         },
       });
 
-      setSessions((current) =>
-        current.map((currentSession) =>
-          currentSession.id === sessionId
-            ? updateSessionMetadata({
-                ...currentSession,
-                messages: currentSession.messages.map((message) =>
-                  message.id === assistantMessageId
-                    ? {
-                        ...message,
-                        content: streamedContent || 'I did not receive a response from the analyst agent.',
-                        isStreaming: false,
-                        timestamp: new Date().toISOString(),
-                      }
-                    : message,
-                ),
-              })
-            : currentSession,
-        ),
-      );
+      updateMessages(sessionId, (current) => {
+        const next = current.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                content: streamedContent || 'I did not receive a response from the analyst agent.',
+                isStreaming: false,
+                timestamp: new Date().toISOString(),
+              }
+            : message,
+        );
+        updateSession(sessionId, (sessionRow) => updateSessionMetadata(sessionRow, next));
+        return next;
+      });
     } catch (error) {
       const content = streamedContent
         ? `${streamedContent}\n\nStream interrupted: ${error.message}`
         : `I could not reach the backend cleanly. ${error.message}`;
 
-      setSessions((current) =>
-        current.map((currentSession) =>
-          currentSession.id === sessionId
-            ? updateSessionMetadata({
-                ...currentSession,
-                messages: currentSession.messages.map((message) =>
-                  message.id === assistantMessageId
-                    ? {
-                        ...message,
-                        content,
-                        isStreaming: false,
-                        timestamp: new Date().toISOString(),
-                        tone: streamedContent ? undefined : 'error',
-                      }
-                    : message,
-                ),
-              })
-            : currentSession,
+      updateMessages(sessionId, (current) =>
+        current.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                content,
+                isStreaming: false,
+                timestamp: new Date().toISOString(),
+                tone: streamedContent ? undefined : 'error',
+              }
+            : message,
         ),
       );
     } finally {
@@ -356,9 +499,32 @@ export default function App() {
     }
   }
 
+  if (auth.loading) {
+    return <main className="site-shell app-loading">Loading...</main>;
+  }
+
+  if (activePath === '/login' || activePath === '/signup') {
+    return (
+      <AuthPage
+        mode={activePath === '/signup' ? 'signup' : 'login'}
+        navigate={navigate}
+        onSignIn={auth.signIn}
+        onSignUp={auth.signUp}
+      />
+    );
+  }
+
   return (
     <main className="site-shell">
-      {activePath === '/chat' ? (
+      {activePath === '/profile' && auth.isAuthenticated ? (
+        <ProfilePage
+          apiStatus={apiStatus}
+          navigate={navigate}
+          onSaveProfile={saveProfile}
+          profile={profile}
+          user={auth.user}
+        />
+      ) : activePath === '/chat' && auth.isAuthenticated ? (
         <ChatPage
           activeSessionId={activeSession?.id}
           apiStatus={apiStatus}
@@ -367,6 +533,9 @@ export default function App() {
           messages={messages}
           messagesEndRef={messagesEndRef}
           navigate={navigate}
+          onOpenProfile={() => navigate('/profile')}
+          onDeleteSession={removeSession}
+          onSignOut={handleSignOut}
           onToggleTheme={toggleTheme}
           selectSession={selectSession}
           sendMessage={sendMessage}
@@ -374,10 +543,20 @@ export default function App() {
           setDraft={setDraft}
           startNewChat={startNewChat}
           theme={theme}
+          user={auth.user}
         />
       ) : (
         <>
-          <Navbar apiStatus={apiStatus} navigate={navigate} onToggleTheme={toggleTheme} theme={theme} />
+          <Navbar
+            apiStatus={apiStatus}
+            isAuthenticated={auth.isAuthenticated}
+            navigate={navigate}
+            onOpenProfile={() => navigate('/profile')}
+            onSignOut={handleSignOut}
+            onToggleTheme={toggleTheme}
+            theme={theme}
+            user={auth.user}
+          />
           <LandingPage navigate={navigate} />
         </>
       )}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Home, Menu, Moon, Sun } from 'lucide-react';
+import { Activity, Home, LogOut, Menu, Moon, Sun, UserRound } from 'lucide-react';
 
 import ChatComposer from '../components/ChatComposer.jsx';
 import ChatDataBackground from '../components/ChatDataBackground.jsx';
@@ -14,6 +14,9 @@ export default function ChatPage({
   messages,
   messagesEndRef,
   navigate,
+  onDeleteSession,
+  onOpenProfile,
+  onSignOut,
   onToggleTheme,
   selectSession,
   sendMessage,
@@ -21,6 +24,7 @@ export default function ChatPage({
   setDraft,
   startNewChat,
   theme,
+  user,
 }) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
@@ -53,6 +57,7 @@ export default function ChatPage({
       <SessionSidebar
         activeSessionId={activeSessionId}
         isOpen={isMobileSidebarOpen}
+        onDeleteSession={onDeleteSession}
         onSelectSession={handleSelectSession}
         onStartNewChat={handleStartNewChat}
         sessions={sessions}
@@ -102,6 +107,22 @@ export default function ChatPage({
               <span />
               <strong>{apiStatus === 'online' ? 'Connected' : apiStatus}</strong>
             </div>
+            <button
+              className="topbar-icon"
+              type="button"
+              onClick={onOpenProfile}
+              title={user?.email ? `Profile for ${user.email}` : 'Profile'}
+            >
+              <UserRound size={17} />
+            </button>
+            <button
+              className="topbar-icon"
+              type="button"
+              onClick={onSignOut}
+              title={user?.email ? `Sign out ${user.email}` : 'Sign out'}
+            >
+              <LogOut size={17} />
+            </button>
           </div>
         </header>
 
