@@ -198,17 +198,17 @@ def _value_band(implied: dict[str, float | None]) -> dict:
 # ---------------------------------------------------------------------------
 
 def peer_comps(cache: dict, ticker: str, peers: list[str]) -> dict:
-    from backend.agent.cache import get_or_fetch_financials, get_or_fetch_market_data
-    target_fin, _ = get_or_fetch_financials(cache, ticker)
-    target_mkt, _ = get_or_fetch_market_data(cache, ticker)
+    from backend.agent.cache import FinancialsCache, MarketDataCache
+    target_fin, _ = FinancialsCache.get_or_fetch(cache, ticker)
+    target_mkt, _ = MarketDataCache.get_or_fetch(cache, ticker)
 
     peer_results: list[dict] = []
     dropped: list[dict] = []
 
     for peer in peers:
         try:
-            peer_fin, _ = get_or_fetch_financials(cache, peer)
-            peer_mkt, _ = get_or_fetch_market_data(cache, peer)
+            peer_fin, _ = FinancialsCache.get_or_fetch(cache, peer)
+            peer_mkt, _ = MarketDataCache.get_or_fetch(cache, peer)
             result = _compute_multiples(peer_fin, peer_mkt)
             result["ticker"] = peer
             peer_results.append(result)
@@ -240,9 +240,9 @@ def peer_comps(cache: dict, ticker: str, peers: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 def damodaran_fallback(cache: dict, ticker: str) -> dict:
-    from backend.agent.cache import get_or_fetch_financials, get_or_fetch_market_data
-    fin, _ = get_or_fetch_financials(cache, ticker)
-    mkt, _ = get_or_fetch_market_data(cache, ticker)
+    from backend.agent.cache import FinancialsCache, MarketDataCache
+    fin, _ = FinancialsCache.get_or_fetch(cache, ticker)
+    mkt, _ = MarketDataCache.get_or_fetch(cache, ticker)
 
     sic: int | None = getattr(fin.metadata, "sic", None)
     if sic is None:
