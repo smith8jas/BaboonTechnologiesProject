@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     openai_api_key: str
     llm_provider: str
     llm_model: str
+    supabase_url: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_service_role_key: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

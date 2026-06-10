@@ -10,14 +10,16 @@ export async function checkHealth() {
   }
 }
 
-export async function sendChatMessage({ message, threadId }) {
+export async function sendChatMessage({ accessToken, message, sessionId, threadId }) {
   const response = await fetch(`${API_BASE_URL}/agent/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(accessToken),
     },
     body: JSON.stringify({
       message,
+      session_id: sessionId,
       thread_id: threadId,
     }),
   });
@@ -31,12 +33,58 @@ export async function sendChatMessage({ message, threadId }) {
   return payload;
 }
 
+export async function getMe({ accessToken }) {
+  return requestJson('/me', { accessToken });
+}
+
+export async function updateMe({ accessToken, profile }) {
+  return requestJson('/me', {
+    accessToken,
+    method: 'PATCH',
+    body: profile,
+  });
+}
+
+export async function listChatSessions({ accessToken }) {
+  return requestJson('/chat/sessions', { accessToken });
+}
+
+export async function createChatSession({ accessToken, title }) {
+  return requestJson('/chat/sessions', {
+    accessToken,
+    method: 'POST',
+    body: { title },
+  });
+}
+
+export async function updateChatSession({ accessToken, sessionId, title }) {
+  return requestJson(`/chat/sessions/${sessionId}`, {
+    accessToken,
+    method: 'PATCH',
+    body: { title },
+  });
+}
+
+export async function deleteChatSession({ accessToken, sessionId }) {
+  return requestJson(`/chat/sessions/${sessionId}`, {
+    accessToken,
+    method: 'DELETE',
+  });
+}
+
+export async function listChatMessages({ accessToken, sessionId }) {
+  return requestJson(`/chat/sessions/${sessionId}/messages`, { accessToken });
+}
+
 export async function streamChatMessage({
+  accessToken,
   message,
+  sessionId,
   threadId,
   onDelta,
   onDone,
   onError,
+  onSessionId,
   onThreadId,
   onStatus,
   onThought,
@@ -47,9 +95,11 @@ export async function streamChatMessage({
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(accessToken),
     },
     body: JSON.stringify({
       message,
+      session_id: sessionId,
       thread_id: threadId,
     }),
   });
@@ -60,7 +110,8 @@ export async function streamChatMessage({
   }
 
   if (!response.body) {
-    const payload = await sendChatMessage({ message, threadId });
+    const payload = await sendChatMessage({ accessToken, message, sessionId, threadId });
+    onSessionId?.(payload.session_id);
     onThreadId?.(payload.thread_id);
     onDelta?.(payload.response || '');
     onDone?.();
@@ -82,15 +133,38 @@ export async function streamChatMessage({
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      readStreamEvent(line, { onDelta, onDone, onError, onThreadId, onStatus, onThought });
+      readStreamEvent(line, { onDelta, onDone, onError, onSessionId, onThreadId, onStatus, onThought });
     }
   }
 
   buffer += decoder.decode();
 
   if (buffer.trim()) {
-    readStreamEvent(buffer, { onDelta, onDone, onError, onThreadId, onStatus, onThought });
+    readStreamEvent(buffer, { onDelta, onDone, onError, onSessionId, onThreadId, onStatus, onThought });
   }
+}
+
+async function requestJson(path, { accessToken, method = 'GET', body } = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(accessToken),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(readError(payload) || `Request failed with ${response.status}`);
+  }
+
+  return payload;
+}
+
+function authHeaders(accessToken) {
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 }
 
 function readError(payload) {
@@ -111,6 +185,7 @@ function readStreamEvent(line, handlers) {
   const event = JSON.parse(line);
 
   if (event.type === 'thread') {
+    handlers.onSessionId?.(event.session_id);
     handlers.onThreadId?.(event.thread_id);
     return;
   }
