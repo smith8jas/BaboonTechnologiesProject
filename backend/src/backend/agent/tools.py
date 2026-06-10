@@ -8,15 +8,14 @@ from langchain_core.tools import InjectedToolArg, tool
 
 from backend.services.scrape import search_and_scrape
 from .cache import (
-    get_or_calculate_dcf,
-    get_or_calculate_growth,
-    get_or_calculate_ratios,
-    get_or_fetch_financials,
-    get_or_fetch_market_data,
-    get_or_fetch_sector_data,
+    CompsCache,
+    DCFCache,
+    FinancialsCache,
+    GrowthCache,
+    MarketDataCache,
+    RatiosCache,
+    SectorDataCache,
     empty_data_cache,
-    get_or_calculate_damodaran_fallback,
-    get_or_calculate_peer_comps
 )
 from .cache_schema import (
     PHASE_CALCULATION,
@@ -70,7 +69,7 @@ def get_financials(
     Returns:
         {"source": "cache" | "external", "data": HistoricalFinancials payload}
     """
-    result, was_cached = get_or_fetch_financials(
+    result, was_cached = FinancialsCache.get_or_fetch(
         _tool_cache(data_cache), ticker, int(span), fiscal_years
     )
     _log_cache_status("get_financials", was_cached, ticker=ticker, span=span, fiscal_years=fiscal_years)
@@ -98,7 +97,7 @@ def get_market_data(
     Returns:
         {"source": "cache" | "external", "data": MarketData payload}
     """
-    result, was_cached = get_or_fetch_market_data(_tool_cache(data_cache), ticker, include_rfr)
+    result, was_cached = MarketDataCache.get_or_fetch(_tool_cache(data_cache), ticker, include_rfr)
     _log_cache_status("get_market_data", was_cached, ticker=ticker, include_rfr=include_rfr)
     return {
         "source": "cache" if was_cached else "external",
@@ -116,7 +115,7 @@ def get_sector_data(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Pull sector-level financial assumptions for a given year."""
-    result, was_cached = get_or_fetch_sector_data(_tool_cache(data_cache), year)
+    result, was_cached = SectorDataCache.get_or_fetch(_tool_cache(data_cache), year)
     _log_cache_status("get_sector_data", was_cached, year=year)
     return {
         "source": "cache" if was_cached else "external",
@@ -133,7 +132,7 @@ def get_income_statement_growth_rates(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Calculate year-over-year income statement growth rates across the latest span fiscal periods."""
-    result, was_cached = get_or_calculate_growth(
+    result, was_cached = GrowthCache.get_or_calculate(
         _tool_cache(data_cache),
         ticker,
         int(span),
@@ -150,7 +149,7 @@ def get_balance_sheet_growth_rates(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Calculate year-over-year balance sheet growth rates across the latest span fiscal periods."""
-    result, was_cached = get_or_calculate_growth(
+    result, was_cached = GrowthCache.get_or_calculate(
         _tool_cache(data_cache),
         ticker,
         int(span),
@@ -167,7 +166,7 @@ def get_liquidity_ratios(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Calculate liquidity ratios across the latest span fiscal periods."""
-    result, was_cached = get_or_calculate_ratios(
+    result, was_cached = RatiosCache.get_or_calculate(
         _tool_cache(data_cache),
         ticker,
         int(span),
@@ -184,7 +183,7 @@ def get_solvency_ratios(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Calculate solvency ratios across the latest span fiscal periods."""
-    result, was_cached = get_or_calculate_ratios(
+    result, was_cached = RatiosCache.get_or_calculate(
         _tool_cache(data_cache),
         ticker,
         int(span),
@@ -201,7 +200,7 @@ def get_profitability_ratios(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Calculate profitability ratios across the latest span fiscal periods."""
-    result, was_cached = get_or_calculate_ratios(
+    result, was_cached = RatiosCache.get_or_calculate(
         _tool_cache(data_cache),
         ticker,
         int(span),
@@ -218,7 +217,7 @@ def get_efficiency_ratios(
     data_cache: Annotated[dict, InjectedToolArg] = None,
 ) -> dict:
     """Calculate working capital efficiency ratios across the latest span fiscal periods."""
-    result, was_cached = get_or_calculate_ratios(
+    result, was_cached = RatiosCache.get_or_calculate(
         _tool_cache(data_cache),
         ticker,
         int(span),
@@ -267,7 +266,7 @@ def run_dcf_valuation(
 ) -> dict:
     """Run a full DCF valuation for a public company ticker."""
     year = year or date.today().year
-    result, was_cached = get_or_calculate_dcf(_tool_cache(data_cache), ticker, int(span), int(year))
+    result, was_cached = DCFCache.get_or_calculate(_tool_cache(data_cache), ticker, int(span), int(year))
     _log_cache_status("run_dcf_valuation", was_cached, ticker=ticker, span=span, year=year)
     return {
         "source": "cache" if was_cached else "external",
@@ -302,9 +301,9 @@ def get_comps_valuation(
     """
     cache = _tool_cache(data_cache)
     if peers:
-        result, was_cached = get_or_calculate_peer_comps(cache, ticker, peers)
+        result, was_cached = CompsCache.get_or_calculate_peer(cache, ticker, peers)
     else:
-        result, was_cached = get_or_calculate_damodaran_fallback(cache, ticker)
+        result, was_cached = CompsCache.get_or_calculate_damodaran(cache, ticker)
     _log_cache_status("get_comps_valuation", was_cached, ticker=ticker)
     return result
 

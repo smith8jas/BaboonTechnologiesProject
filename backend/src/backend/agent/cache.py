@@ -58,148 +58,6 @@ def empty_data_catalog() -> dict[str, Any]:
     return deepcopy(EMPTY_DATA_CATALOG)
 
 
-def build_data_catalog(cache: dict[str, Any]) -> dict[str, Any]:
-    """Build a compact availability summary for model prompts."""
-    catalog = empty_data_catalog()
-
-    for ticker in sorted((cache.get(CACHE_COMPANIES) or {})):
-        company = cache[CACHE_COMPANIES][ticker]
-        searched = company.get(CACHE_SEARCHED, {})
-        calculated = company.get(CACHE_CALCULATED, {})
-        entry = {
-            "ticker": ticker,
-            "name": company.get("name"),
-            CACHE_SEARCHED: {},
-            CACHE_CALCULATED: {},
-        }
-
-        financials_entry = searched.get(CACHE_FINANCIALS)
-        if financials_entry:
-            coverage = financials_entry.get("coverage", {})
-            entry[CACHE_SEARCHED][CACHE_FINANCIALS] = {
-                "available": True,
-                "fiscal_years": coverage.get("fiscal_years", []),
-                "period_ends": coverage.get("period_ends", []),
-                "max_span": coverage.get("max_span"),
-                "summary": _financials_summary(ticker, coverage),
-            }
-
-        market_data_entry = searched.get(CACHE_MARKET_DATA)
-        if market_data_entry:
-            entry[CACHE_SEARCHED][CACHE_MARKET_DATA] = {
-                "available": True,
-                "fields": market_data_entry.get("fields", []),
-                "include_rfr": market_data_entry.get("include_rfr", False),
-                "summary": f"Market data for {ticker} is available.",
-            }
-
-        growth_entry = calculated.get(CACHE_GROWTH, {})
-        if growth_entry:
-            entry[CACHE_CALCULATED][CACHE_GROWTH] = _catalog_leaf_map(growth_entry)
-
-        ratios_entry = calculated.get(CACHE_RATIOS, {})
-        if ratios_entry:
-            entry[CACHE_CALCULATED][CACHE_RATIOS] = _catalog_leaf_map(ratios_entry)
-
-        dcf_entry = calculated.get(CACHE_DCF, {}).get(CACHE_SCENARIOS, {})
-        if dcf_entry:
-            entry[CACHE_CALCULATED][CACHE_DCF] = {
-                scenario: {
-                    "available": True,
-                    "base_fiscal_year": data.get("coverage", {}).get("base_fiscal_year"),
-                    "projection_years": data.get("coverage", {}).get("projection_years", []),
-                    "intrinsic_value_per_share": (
-                        data.get("payload", {}) or {}
-                    ).get("intrinsic_value_per_share"),
-                }
-                for scenario, data in dcf_entry.items()
-            }
-
-        comps_entry = calculated.get(CACHE_COMPARABLES, {})
-        if comps_entry:
-            entry[CACHE_CALCULATED][CACHE_COMPARABLES] = {
-                key: {"available": True}
-                for key in ("peer", "damodaran")
-                if comps_entry.get(key)
-            }
-
-        catalog[CACHE_COMPANIES].append(entry)
-
-    sector_years = sorted((cache.get(CACHE_GLOBAL, {}).get(CACHE_SECTOR_DATA_BY_YEAR) or {}).keys())
-    catalog[CACHE_GLOBAL]["sector_data_years"] = sector_years
-    return catalog
-
-
-def build_data_payload(cache: dict[str, Any]) -> dict[str, Any]:
-    """Build the detailed cached data payload used by response generation."""
-    payload: dict[str, Any] = {}
-
-    for ticker, company in (cache.get(CACHE_COMPANIES) or {}).items():
-        entry: dict[str, Any] = {}
-        searched = company.get(CACHE_SEARCHED, {})
-        calculated = company.get(CACHE_CALCULATED, {})
-
-        financials_entry = searched.get(CACHE_FINANCIALS)
-        if financials_entry:
-            entry[CACHE_FINANCIALS] = {
-                "metadata": financials_entry.get("metadata"),
-                "periods": sorted(
-                    financials_entry.get("periods_by_fiscal_year", {}).values(),
-                    key=lambda p: p.get("period_end", ""),
-                ),
-            }
-
-        market_data_entry = searched.get(CACHE_MARKET_DATA)
-        if market_data_entry:
-            entry[CACHE_MARKET_DATA] = market_data_entry.get("payload")
-
-        growth_entry = calculated.get(CACHE_GROWTH, {})
-        if growth_entry:
-            entry[CACHE_GROWTH] = {
-                stmt: data["payload"]
-                for stmt, data in growth_entry.items()
-                if data.get("payload") is not None
-            }
-
-        ratios_entry = calculated.get(CACHE_RATIOS, {})
-        if ratios_entry:
-            entry[CACHE_RATIOS] = {
-                ratio_type: data["payload"]
-                for ratio_type, data in ratios_entry.items()
-                if data.get("payload") is not None
-            }
-
-        dcf_scenarios = calculated.get(CACHE_DCF, {}).get(CACHE_SCENARIOS, {})
-        if dcf_scenarios:
-            entry[CACHE_DCF] = {
-                scenario: data["payload"]
-                for scenario, data in dcf_scenarios.items()
-                if data.get("payload") is not None
-            }
-
-        comps_entry = calculated.get(CACHE_COMPARABLES, {})
-        if comps_entry:
-            entry[CACHE_COMPARABLES] = {
-                key: data["payload"]
-                for key in ("peer", "damodaran")
-                if (data := comps_entry.get(key)) and data.get("payload") is not None
-            }
-
-        if entry:
-            payload[ticker] = entry
-
-    sector_by_year = (cache.get(CACHE_GLOBAL) or {}).get(CACHE_SECTOR_DATA_BY_YEAR) or {}
-    sector_data = {
-        year: data["payload"]
-        for year, data in sector_by_year.items()
-        if data.get("payload") is not None
-    }
-    if sector_data:
-        payload["sector_data"] = sector_data
-
-    return payload
-
-
 def state_cache(state: dict[str, Any]) -> dict[str, Any]:
     """Return a normalized deep copy of the graph state's data cache."""
     cache = deepcopy(state.get("data_cache") or empty_data_cache())
@@ -211,385 +69,633 @@ def state_cache(state: dict[str, Any]) -> dict[str, Any]:
 def tool_content(payload: Any) -> str:
     """Serialize tool payloads into JSON strings for LangChain ToolMessage content."""
     if isinstance(payload, BaseModel):
-        return json.dumps(_dump_model(payload), default=str)
+        return json.dumps(CacheHelpers.dump_model(payload), default=str)
     return json.dumps(payload, default=str)
 
 
-def get_or_fetch_financials(
-    cache: dict[str, Any],
-    ticker: str,
-    span: int = 5,
-    fiscal_years: list[int] | None = None,
-) -> tuple[HistoricalFinancials, bool]:
-    """Return cached financials when coverage is sufficient, otherwise fetch and store."""
-    if fiscal_years:
-        if _has_fiscal_years(cache, ticker, fiscal_years):
-            return _financials_from_cache_by_years(cache, ticker, fiscal_years), True
-        needed_span = max(span, date.today().year - min(int(y) for y in fiscal_years) + 2)
-        hf = financials.get_cached_financials(_ticker(ticker), int(needed_span))
-        _store_financials(cache, hf, int(needed_span))
-        return _filter_hf_by_years(hf, fiscal_years), False
+# ─── Shared utilities ─────────────────────────────────────────────────────────
 
-    if _has_financials(cache, ticker, span):
-        return _financials_from_cache(cache, ticker, span), True
+class CacheHelpers:
+    @staticmethod
+    def company(cache: dict[str, Any], ticker: str) -> dict[str, Any]:
+        key = CacheHelpers.ticker(ticker)
+        companies = cache.setdefault(CACHE_COMPANIES, {})
+        return companies.setdefault(
+            key,
+            {
+                "ticker": key,
+                "name": None,
+                CACHE_SEARCHED: {},
+                CACHE_CALCULATED: {},
+            },
+        )
 
-    hf = financials.get_cached_financials(_ticker(ticker), int(span))
-    _store_financials(cache, hf, int(span))
-    return hf, False
+    @staticmethod
+    def calculated_entry(
+        payload: dict[str, Any],
+        hf: HistoricalFinancials,
+        depends_on: list[str],
+    ) -> dict[str, Any]:
+        coverage = FinancialsCache.coverage(hf, len(hf.periods))
+        return {
+            "payload": payload,
+            "coverage": coverage,
+            "depends_on": depends_on,
+            "source_fingerprint": {CACHE_FINANCIALS: coverage},
+            "last_updated": CacheHelpers.now(),
+        }
 
+    @staticmethod
+    def coverage_satisfies(coverage: dict[str, Any], span: int) -> bool:
+        return int(coverage.get("max_span") or 0) >= int(span)
 
-def get_or_fetch_market_data(
-    cache: dict[str, Any],
-    ticker: str,
-    include_rfr: bool = True,
-) -> tuple[MarketData, bool]:
-    """Return cached market data when possible, otherwise fetch and store it."""
-    if _has_market_data(cache, ticker, include_rfr):
-        return _market_data_from_cache(cache, ticker), True
+    @staticmethod
+    def catalog_leaf_map(source: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: {
+                "available": True,
+                "fiscal_years": value.get("coverage", {}).get("fiscal_years", []),
+            }
+            for key, value in source.items()
+        }
 
-    md = financials.get_market_data(_ticker(ticker), include_rfr)
-    _store_market_data(cache, ticker, md, include_rfr)
-    return md, False
+    @staticmethod
+    def dump_model(model: BaseModel) -> dict[str, Any]:
+        return model.model_dump(mode="json")
 
+    @staticmethod
+    def ticker(ticker: str) -> str:
+        return str(ticker).strip().upper()
 
-def get_or_fetch_sector_data(
-    cache: dict[str, Any],
-    year: int | None,
-) -> tuple[SectorData, bool]:
-    """Return cached sector assumptions for a year, otherwise fetch and store them."""
-    resolved_year = str(year or date.today().year)
-    cached = cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR].get(resolved_year)
-    if cached:
-        return SectorData.model_validate(cached["payload"]), True
-
-    sd = financials.get_sector_data(int(resolved_year))
-    cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR][resolved_year] = {
-        "payload_type": "SectorData",
-        "payload": _dump_model(sd),
-        "last_updated": _now(),
-    }
-    return sd, False
-
-
-def get_or_calculate_growth(
-    cache: dict[str, Any],
-    ticker: str,
-    span: int,
-    statement: str,
-) -> tuple[dict[str, Any], bool]:
-    """Return cached growth calculations for a statement subdomain or compute them."""
-    company = _company(cache, ticker)
-    growth_cache = company[CACHE_CALCULATED].setdefault(CACHE_GROWTH, {})
-    cached = growth_cache.get(statement)
-    if cached and _coverage_satisfies(cached.get("coverage", {}), span):
-        return cached["payload"], True
-
-    hf, _ = get_or_fetch_financials(cache, ticker, span)
-    if statement == SUBDOMAIN_INCOME_STATEMENT:
-        payload = growth.get_income_statement_growth_rates(hf)
-    elif statement == SUBDOMAIN_BALANCE_SHEET:
-        payload = growth.get_balance_sheet_growth_rates(hf)
-    else:
-        raise ValueError(f"Unknown growth statement: {statement}")
-
-    growth_cache[statement] = _calculated_entry(payload, hf, [DEPENDENCY_FINANCIALS])
-    return payload, False
+    @staticmethod
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
 
-def get_or_calculate_ratios(
-    cache: dict[str, Any],
-    ticker: str,
-    span: int,
-    ratio_type: str,
-) -> tuple[dict[str, Any], bool]:
-    """Return cached ratio calculations for a ratio subdomain or compute them."""
-    company = _company(cache, ticker)
-    ratios_cache = company[CACHE_CALCULATED].setdefault(CACHE_RATIOS, {})
-    cached = ratios_cache.get(ratio_type)
-    if cached and _coverage_satisfies(cached.get("coverage", {}), span):
-        return cached["payload"], True
+# ─── Tool cache classes ───────────────────────────────────────────────────────
 
-    hf, _ = get_or_fetch_financials(cache, ticker, span)
-    ratio_funcs = {
+class FinancialsCache:
+    CACHE_KEY = CACHE_FINANCIALS
+    BUCKET = CACHE_SEARCHED
+
+    @staticmethod
+    def get_or_fetch(
+        cache: dict[str, Any],
+        ticker: str,
+        span: int = 5,
+        fiscal_years: list[int] | None = None,
+    ) -> tuple[HistoricalFinancials, bool]:
+        if fiscal_years:
+            if FinancialsCache._has_fiscal_years(cache, ticker, fiscal_years):
+                return FinancialsCache._from_cache_by_years(cache, ticker, fiscal_years), True
+            needed_span = max(span, date.today().year - min(int(y) for y in fiscal_years) + 2)
+            hf = financials.get_cached_financials(CacheHelpers.ticker(ticker), int(needed_span))
+            FinancialsCache._store(cache, hf, int(needed_span))
+            return FinancialsCache._filter_by_years(hf, fiscal_years), False
+
+        if FinancialsCache._has(cache, ticker, span):
+            return FinancialsCache._from_cache(cache, ticker, span), True
+
+        hf = financials.get_cached_financials(CacheHelpers.ticker(ticker), int(span))
+        FinancialsCache._store(cache, hf, int(span))
+        return hf, False
+
+    @staticmethod
+    def _store(cache: dict[str, Any], hf: HistoricalFinancials, span: int) -> None:
+        company = CacheHelpers.company(cache, hf.ticker)
+        company["name"] = hf.metadata.name
+        financials_cache = company[CACHE_SEARCHED].setdefault(
+            CACHE_FINANCIALS,
+            {
+                "payload_type": "HistoricalFinancials",
+                "metadata": {},
+                "periods_by_fiscal_year": {},
+                "coverage": {},
+                "last_updated": None,
+            },
+        )
+        financials_cache["metadata"] = CacheHelpers.dump_model(hf.metadata)
+        for period in hf.periods:
+            key = FinancialsCache._fiscal_year_key(period.fiscal_year or period.period_end.year)
+            financials_cache["periods_by_fiscal_year"][key] = CacheHelpers.dump_model(period)
+        financials_cache["coverage"] = FinancialsCache.coverage(hf, span)
+        financials_cache["last_updated"] = CacheHelpers.now()
+
+    @staticmethod
+    def _has(cache: dict[str, Any], ticker: str, span: int) -> bool:
+        entry = CacheHelpers.company(cache, ticker)[CACHE_SEARCHED].get(CACHE_FINANCIALS)
+        return bool(entry and CacheHelpers.coverage_satisfies(entry.get("coverage", {}), span))
+
+    @staticmethod
+    def _from_cache(cache: dict[str, Any], ticker: str, span: int) -> HistoricalFinancials:
+        entry = CacheHelpers.company(cache, ticker)[CACHE_SEARCHED][CACHE_FINANCIALS]
+        periods = [
+            value
+            for _, value in sorted(
+                entry["periods_by_fiscal_year"].items(),
+                key=lambda item: item[1].get("period_end", ""),
+            )
+        ]
+        if span:
+            periods = periods[-int(span):]
+        return HistoricalFinancials.model_validate(
+            {
+                "ticker": CacheHelpers.ticker(ticker),
+                "metadata": entry["metadata"],
+                "periods": periods,
+            }
+        )
+
+    @staticmethod
+    def _has_fiscal_years(cache: dict[str, Any], ticker: str, fiscal_years: list[int]) -> bool:
+        entry = CacheHelpers.company(cache, ticker)[CACHE_SEARCHED].get(CACHE_FINANCIALS)
+        if not entry:
+            return False
+        cached = {
+            FinancialsCache._fiscal_year_key(y)
+            for y in entry.get("coverage", {}).get("fiscal_years", [])
+        }
+        return all(FinancialsCache._fiscal_year_key(y) in cached for y in fiscal_years)
+
+    @staticmethod
+    def _from_cache_by_years(
+        cache: dict[str, Any],
+        ticker: str,
+        fiscal_years: list[int],
+    ) -> HistoricalFinancials:
+        entry = CacheHelpers.company(cache, ticker)[CACHE_SEARCHED][CACHE_FINANCIALS]
+        years_set = {FinancialsCache._fiscal_year_key(y) for y in fiscal_years}
+        periods = sorted(
+            [v for k, v in entry["periods_by_fiscal_year"].items()
+             if FinancialsCache._fiscal_year_key(k) in years_set],
+            key=lambda p: p.get("period_end", ""),
+        )
+        return HistoricalFinancials.model_validate(
+            {"ticker": CacheHelpers.ticker(ticker), "metadata": entry["metadata"], "periods": periods}
+        )
+
+    @staticmethod
+    def _filter_by_years(hf: HistoricalFinancials, fiscal_years: list[int]) -> HistoricalFinancials:
+        years_set = {FinancialsCache._fiscal_year_key(y) for y in fiscal_years}
+        filtered = [p for p in hf.periods if FinancialsCache._fiscal_year_key(p.fiscal_year) in years_set]
+        return HistoricalFinancials.model_validate(
+            {
+                "ticker": hf.ticker,
+                "metadata": hf.metadata.model_dump(mode="json"),
+                "periods": [p.model_dump(mode="json") for p in filtered],
+            }
+        )
+
+    @staticmethod
+    def coverage(hf: HistoricalFinancials, span: int) -> dict[str, Any]:
+        return {
+            "fiscal_years": [FinancialsCache._fiscal_year_key(p.fiscal_year) for p in hf.periods],
+            "period_ends": [p.period_end.isoformat() for p in hf.periods],
+            "max_span": max(int(span), len(hf.periods)),
+        }
+
+    @staticmethod
+    def _fiscal_year_key(year: Any) -> str:
+        return str(year).strip().upper().removeprefix("FY")
+
+    @staticmethod
+    def _summary(ticker: str, coverage: dict[str, Any]) -> str:
+        years = coverage.get("fiscal_years", [])
+        if not years:
+            return f"Historical financial statements for {ticker} are available."
+        return f"Historical financial statements for {ticker} are available for {years[0]}-{years[-1]}."
+
+    @staticmethod
+    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_SEARCHED, {}).get(CACHE_FINANCIALS)
+        if not entry:
+            return None
+        coverage = entry.get("coverage", {})
+        return {
+            "available": True,
+            "fiscal_years": coverage.get("fiscal_years", []),
+            "period_ends": coverage.get("period_ends", []),
+            "max_span": coverage.get("max_span"),
+            "summary": FinancialsCache._summary(company_cache.get("ticker", ""), coverage),
+        }
+
+    @staticmethod
+    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_SEARCHED, {}).get(CACHE_FINANCIALS)
+        if not entry:
+            return None
+        return {
+            "metadata": entry.get("metadata"),
+            "periods": sorted(
+                entry.get("periods_by_fiscal_year", {}).values(),
+                key=lambda p: p.get("period_end", ""),
+            ),
+        }
+
+
+class MarketDataCache:
+    CACHE_KEY = CACHE_MARKET_DATA
+    BUCKET = CACHE_SEARCHED
+
+    @staticmethod
+    def get_or_fetch(
+        cache: dict[str, Any],
+        ticker: str,
+        include_rfr: bool = True,
+    ) -> tuple[MarketData, bool]:
+        if MarketDataCache._has(cache, ticker, include_rfr):
+            return MarketDataCache._from_cache(cache, ticker), True
+        md = financials.get_market_data(CacheHelpers.ticker(ticker), include_rfr)
+        MarketDataCache._store(cache, ticker, md, include_rfr)
+        return md, False
+
+    @staticmethod
+    def _store(cache: dict[str, Any], ticker: str, md: MarketData, include_rfr: bool) -> None:
+        company = CacheHelpers.company(cache, ticker)
+        payload_dict = CacheHelpers.dump_model(md)
+        company[CACHE_SEARCHED][CACHE_MARKET_DATA] = {
+            "payload_type": "MarketData",
+            "payload": payload_dict,
+            "fields": list(payload_dict.keys()),
+            "include_rfr": bool(include_rfr),
+            "last_updated": CacheHelpers.now(),
+        }
+
+    @staticmethod
+    def _has(cache: dict[str, Any], ticker: str, include_rfr: bool) -> bool:
+        entry = CacheHelpers.company(cache, ticker)[CACHE_SEARCHED].get(CACHE_MARKET_DATA)
+        if not entry:
+            return False
+        return bool(entry.get("include_rfr")) or not include_rfr
+
+    @staticmethod
+    def _from_cache(cache: dict[str, Any], ticker: str) -> MarketData:
+        return MarketData.model_validate(
+            CacheHelpers.company(cache, ticker)[CACHE_SEARCHED][CACHE_MARKET_DATA]["payload"]
+        )
+
+    @staticmethod
+    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_SEARCHED, {}).get(CACHE_MARKET_DATA)
+        if not entry:
+            return None
+        return {
+            "available": True,
+            "fields": entry.get("fields", []),
+            "include_rfr": entry.get("include_rfr", False),
+            "summary": f"Market data for {company_cache.get('ticker', '')} is available.",
+        }
+
+    @staticmethod
+    def payload_entry(company_cache: dict[str, Any]) -> Any | None:
+        entry = company_cache.get(CACHE_SEARCHED, {}).get(CACHE_MARKET_DATA)
+        if not entry:
+            return None
+        return entry.get("payload")
+
+
+class SectorDataCache:
+    @staticmethod
+    def get_or_fetch(
+        cache: dict[str, Any],
+        year: int | None,
+    ) -> tuple[SectorData, bool]:
+        resolved_year = str(year or date.today().year)
+        cached = cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR].get(resolved_year)
+        if cached:
+            return SectorData.model_validate(cached["payload"]), True
+        sd = financials.get_sector_data(int(resolved_year))
+        cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR][resolved_year] = {
+            "payload_type": "SectorData",
+            "payload": CacheHelpers.dump_model(sd),
+            "last_updated": CacheHelpers.now(),
+        }
+        return sd, False
+
+    @staticmethod
+    def catalog_entry(global_cache: dict[str, Any]) -> list[str]:
+        return sorted((global_cache.get(CACHE_SECTOR_DATA_BY_YEAR) or {}).keys())
+
+    @staticmethod
+    def payload_entry(global_cache: dict[str, Any]) -> dict | None:
+        sector_by_year = (global_cache or {}).get(CACHE_SECTOR_DATA_BY_YEAR) or {}
+        data = {
+            year: d["payload"]
+            for year, d in sector_by_year.items()
+            if d.get("payload") is not None
+        }
+        return data or None
+
+
+class GrowthCache:
+    CACHE_KEY = CACHE_GROWTH
+    BUCKET = CACHE_CALCULATED
+
+    @staticmethod
+    def get_or_calculate(
+        cache: dict[str, Any],
+        ticker: str,
+        span: int,
+        statement: str,
+    ) -> tuple[dict[str, Any], bool]:
+        company = CacheHelpers.company(cache, ticker)
+        growth_cache = company[CACHE_CALCULATED].setdefault(CACHE_GROWTH, {})
+        cached = growth_cache.get(statement)
+        if cached and CacheHelpers.coverage_satisfies(cached.get("coverage", {}), span):
+            return cached["payload"], True
+
+        hf, _ = FinancialsCache.get_or_fetch(cache, ticker, span)
+        if statement == SUBDOMAIN_INCOME_STATEMENT:
+            payload = growth.get_income_statement_growth_rates(hf)
+        elif statement == SUBDOMAIN_BALANCE_SHEET:
+            payload = growth.get_balance_sheet_growth_rates(hf)
+        else:
+            raise ValueError(f"Unknown growth statement: {statement}")
+
+        growth_cache[statement] = CacheHelpers.calculated_entry(payload, hf, [DEPENDENCY_FINANCIALS])
+        return payload, False
+
+    @staticmethod
+    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_GROWTH, {})
+        if not entry:
+            return None
+        return CacheHelpers.catalog_leaf_map(entry)
+
+    @staticmethod
+    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_GROWTH, {})
+        if not entry:
+            return None
+        result = {
+            stmt: data["payload"]
+            for stmt, data in entry.items()
+            if data.get("payload") is not None
+        }
+        return result or None
+
+
+class RatiosCache:
+    CACHE_KEY = CACHE_RATIOS
+    BUCKET = CACHE_CALCULATED
+
+    _RATIO_FUNCS = {
         "liquidity": ratio.get_liquidity_ratios,
         "solvency": ratio.get_solvency_ratios,
         "profitability": ratio.get_profitability_ratios,
         "efficiency": ratio.get_efficiency_ratios,
     }
-    payload = ratio_funcs[ratio_type](hf)
-    ratios_cache[ratio_type] = _calculated_entry(payload, hf, [DEPENDENCY_FINANCIALS])
-    return payload, False
+
+    @staticmethod
+    def get_or_calculate(
+        cache: dict[str, Any],
+        ticker: str,
+        span: int,
+        ratio_type: str,
+    ) -> tuple[dict[str, Any], bool]:
+        company = CacheHelpers.company(cache, ticker)
+        ratios_cache = company[CACHE_CALCULATED].setdefault(CACHE_RATIOS, {})
+        cached = ratios_cache.get(ratio_type)
+        if cached and CacheHelpers.coverage_satisfies(cached.get("coverage", {}), span):
+            return cached["payload"], True
+
+        hf, _ = FinancialsCache.get_or_fetch(cache, ticker, span)
+        payload = RatiosCache._RATIO_FUNCS[ratio_type](hf)
+        ratios_cache[ratio_type] = CacheHelpers.calculated_entry(payload, hf, [DEPENDENCY_FINANCIALS])
+        return payload, False
+
+    @staticmethod
+    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_RATIOS, {})
+        if not entry:
+            return None
+        return CacheHelpers.catalog_leaf_map(entry)
+
+    @staticmethod
+    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_RATIOS, {})
+        if not entry:
+            return None
+        result = {
+            ratio_type: data["payload"]
+            for ratio_type, data in entry.items()
+            if data.get("payload") is not None
+        }
+        return result or None
 
 
-def get_or_calculate_dcf(
-    cache: dict[str, Any],
-    ticker: str,
-    span: int,
-    year: int,
-) -> tuple[dict[str, Any], bool]:
-    """Return cached DCF output for the default scenario or compute the valuation pipeline."""
-    company = _company(cache, ticker)
-    dcf_cache = company[CACHE_CALCULATED].setdefault(CACHE_DCF, {CACHE_SCENARIOS: {}})
-    cached = dcf_cache.setdefault(CACHE_SCENARIOS, {}).get(SCENARIO_DEFAULT)
-    if (
-        cached
-        and _coverage_satisfies(cached.get("source_fingerprint", {}).get(CACHE_FINANCIALS, {}), span)
-        and cached.get("coverage", {}).get("sector_year") == int(year)
-    ):
-        return cached["payload"], True
+class DCFCache:
+    CACHE_KEY = CACHE_DCF
+    BUCKET = CACHE_CALCULATED
 
-    hf, _ = get_or_fetch_financials(cache, ticker, span)
-    md, _ = get_or_fetch_market_data(cache, ticker, True)
-    sd, _ = get_or_fetch_sector_data(cache, year)
-    assumptions = dcf_engine.build_assumptions(hf, md, sd)
-    valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd)
-    result = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
-    payload = _dump_model(result)
-    dcf_cache[CACHE_SCENARIOS][SCENARIO_DEFAULT] = {
-        "payload_type": "DCFOutput",
-        "payload": payload,
-        "coverage": {
-            "base_fiscal_year": result.fiscal_year,
-            "projection_years": result.projection_years,
-            "sector_year": int(year),
-        },
-        "depends_on": [
-            DEPENDENCY_FINANCIALS,
-            DEPENDENCY_MARKET_DATA,
-            f"{DEPENDENCY_SECTOR_DATA}.{year}",
-        ],
-        "source_fingerprint": {
-            CACHE_FINANCIALS: _financials_coverage(hf, span),
-            "sector_year": int(year),
-        },
-        "last_updated": _now(),
-    }
-    return payload, False
+    @staticmethod
+    def get_or_calculate(
+        cache: dict[str, Any],
+        ticker: str,
+        span: int,
+        year: int,
+    ) -> tuple[dict[str, Any], bool]:
+        company = CacheHelpers.company(cache, ticker)
+        dcf_cache = company[CACHE_CALCULATED].setdefault(CACHE_DCF, {CACHE_SCENARIOS: {}})
+        cached = dcf_cache.setdefault(CACHE_SCENARIOS, {}).get(SCENARIO_DEFAULT)
+        if (
+            cached
+            and CacheHelpers.coverage_satisfies(
+                cached.get("source_fingerprint", {}).get(CACHE_FINANCIALS, {}), span
+            )
+            and cached.get("coverage", {}).get("sector_year") == int(year)
+        ):
+            return cached["payload"], True
 
-def get_or_calculate_peer_comps(
-    cache: dict[str, Any],
-    ticker: str,
-    peers: list[str],
-) -> tuple[dict[str, Any], bool]:
-    """Return cached peer comps for this exact peer set, or compute and store them."""
-    company = _company(cache, ticker)
-    comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
-    peer_key = ",".join(sorted(p.strip().upper() for p in peers))
-    cached = comps_cache.get("peer")
-    if cached and cached.get("peer_key") == peer_key:
-        return cached["payload"], True
+        hf, _ = FinancialsCache.get_or_fetch(cache, ticker, span)
+        md, _ = MarketDataCache.get_or_fetch(cache, ticker, True)
+        sd, _ = SectorDataCache.get_or_fetch(cache, year)
+        assumptions = dcf_engine.build_assumptions(hf, md, sd)
+        valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd)
+        result = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
+        payload = CacheHelpers.dump_model(result)
+        dcf_cache[CACHE_SCENARIOS][SCENARIO_DEFAULT] = {
+            "payload_type": "DCFOutput",
+            "payload": payload,
+            "coverage": {
+                "base_fiscal_year": result.fiscal_year,
+                "projection_years": result.projection_years,
+                "sector_year": int(year),
+            },
+            "depends_on": [
+                DEPENDENCY_FINANCIALS,
+                DEPENDENCY_MARKET_DATA,
+                f"{DEPENDENCY_SECTOR_DATA}.{year}",
+            ],
+            "source_fingerprint": {
+                CACHE_FINANCIALS: FinancialsCache.coverage(hf, span),
+                "sector_year": int(year),
+            },
+            "last_updated": CacheHelpers.now(),
+        }
+        return payload, False
 
-    payload = comparables.peer_comps(cache, ticker, peers)
-    comps_cache["peer"] = {
-        "payload": payload,
-        "peer_key": peer_key,
-        "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
-        "last_updated": _now(),
-    }
-    return payload, False
-
-
-def get_or_calculate_damodaran_fallback(
-    cache: dict[str, Any],
-    ticker: str,
-) -> tuple[dict[str, Any], bool]:
-    """Return cached Damodaran sector fallback, or compute and store it."""
-    company = _company(cache, ticker)
-    comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
-    cached = comps_cache.get("damodaran")
-    if cached:
-        return cached["payload"], True
-
-    payload = comparables.damodaran_fallback(cache, ticker)
-    comps_cache["damodaran"] = {
-        "payload": payload,
-        "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
-        "last_updated": _now(),
-    }
-    return payload, False
-
-
-def _store_financials(cache: dict[str, Any], hf: HistoricalFinancials, span: int) -> None:
-    company = _company(cache, hf.ticker)
-    company["name"] = hf.metadata.name
-    financials_cache = company[CACHE_SEARCHED].setdefault(
-        CACHE_FINANCIALS,
-        {
-            "payload_type": "HistoricalFinancials",
-            "metadata": {},
-            "periods_by_fiscal_year": {},
-            "coverage": {},
-            "last_updated": None,
-        },
-    )
-    financials_cache["metadata"] = _dump_model(hf.metadata)
-    for period in hf.periods:
-        key = _fiscal_year_key(period.fiscal_year or period.period_end.year)
-        financials_cache["periods_by_fiscal_year"][key] = _dump_model(period)
-    financials_cache["coverage"] = _financials_coverage(hf, span)
-    financials_cache["last_updated"] = _now()
-
-
-def _store_market_data(
-    cache: dict[str, Any],
-    ticker: str,
-    md: MarketData,
-    include_rfr: bool,
-) -> None:
-    company = _company(cache, ticker)
-    payload_dict = _dump_model(md)
-    company[CACHE_SEARCHED][CACHE_MARKET_DATA] = {
-        "payload_type": "MarketData",
-        "payload": payload_dict,
-        "fields": list(payload_dict.keys()),
-        "include_rfr": bool(include_rfr),
-        "last_updated": _now(),
-    }
-
-
-def _has_financials(cache: dict[str, Any], ticker: str, span: int) -> bool:
-    entry = _company(cache, ticker)[CACHE_SEARCHED].get(CACHE_FINANCIALS)
-    return bool(entry and _coverage_satisfies(entry.get("coverage", {}), span))
-
-
-def _has_market_data(cache: dict[str, Any], ticker: str, include_rfr: bool) -> bool:
-    entry = _company(cache, ticker)[CACHE_SEARCHED].get(CACHE_MARKET_DATA)
-    if not entry:
-        return False
-    return bool(entry.get("include_rfr")) or not include_rfr
-
-
-def _financials_from_cache(cache: dict[str, Any], ticker: str, span: int) -> HistoricalFinancials:
-    entry = _company(cache, ticker)[CACHE_SEARCHED][CACHE_FINANCIALS]
-    periods = [
-        value
-        for _, value in sorted(
-            entry["periods_by_fiscal_year"].items(),
-            key=lambda item: item[1].get("period_end", ""),
+    @staticmethod
+    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
+        dcf_entry = (
+            company_cache.get(CACHE_CALCULATED, {})
+            .get(CACHE_DCF, {})
+            .get(CACHE_SCENARIOS, {})
         )
-    ]
-    if span:
-        periods = periods[-int(span):]
-    return HistoricalFinancials.model_validate(
-        {
-            "ticker": _ticker(ticker),
-            "metadata": entry["metadata"],
-            "periods": periods,
+        if not dcf_entry:
+            return None
+        return {
+            scenario: {
+                "available": True,
+                "base_fiscal_year": data.get("coverage", {}).get("base_fiscal_year"),
+                "projection_years": data.get("coverage", {}).get("projection_years", []),
+                "intrinsic_value_per_share": (
+                    data.get("payload", {}) or {}
+                ).get("intrinsic_value_per_share"),
+            }
+            for scenario, data in dcf_entry.items()
         }
-    )
 
-
-def _has_fiscal_years(cache: dict[str, Any], ticker: str, fiscal_years: list[int]) -> bool:
-    entry = _company(cache, ticker)[CACHE_SEARCHED].get(CACHE_FINANCIALS)
-    if not entry:
-        return False
-    cached = {_fiscal_year_key(y) for y in entry.get("coverage", {}).get("fiscal_years", [])}
-    return all(_fiscal_year_key(y) in cached for y in fiscal_years)
-
-
-def _financials_from_cache_by_years(
-    cache: dict[str, Any],
-    ticker: str,
-    fiscal_years: list[int],
-) -> HistoricalFinancials:
-    entry = _company(cache, ticker)[CACHE_SEARCHED][CACHE_FINANCIALS]
-    years_set = {_fiscal_year_key(y) for y in fiscal_years}
-    periods = sorted(
-        [v for k, v in entry["periods_by_fiscal_year"].items() if _fiscal_year_key(k) in years_set],
-        key=lambda p: p.get("period_end", ""),
-    )
-    return HistoricalFinancials.model_validate(
-        {"ticker": _ticker(ticker), "metadata": entry["metadata"], "periods": periods}
-    )
-
-
-def _filter_hf_by_years(hf: HistoricalFinancials, fiscal_years: list[int]) -> HistoricalFinancials:
-    years_set = {_fiscal_year_key(y) for y in fiscal_years}
-    filtered = [p for p in hf.periods if _fiscal_year_key(p.fiscal_year) in years_set]
-    return HistoricalFinancials.model_validate(
-        {
-            "ticker": hf.ticker,
-            "metadata": hf.metadata.model_dump(mode="json"),
-            "periods": [p.model_dump(mode="json") for p in filtered],
+    @staticmethod
+    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
+        dcf_scenarios = (
+            company_cache.get(CACHE_CALCULATED, {})
+            .get(CACHE_DCF, {})
+            .get(CACHE_SCENARIOS, {})
+        )
+        if not dcf_scenarios:
+            return None
+        result = {
+            scenario: data["payload"]
+            for scenario, data in dcf_scenarios.items()
+            if data.get("payload") is not None
         }
-    )
+        return result or None
 
 
-def _market_data_from_cache(cache: dict[str, Any], ticker: str) -> MarketData:
-    return MarketData.model_validate(_company(cache, ticker)[CACHE_SEARCHED][CACHE_MARKET_DATA]["payload"])
+class CompsCache:
+    CACHE_KEY = CACHE_COMPARABLES
+    BUCKET = CACHE_CALCULATED
+
+    @staticmethod
+    def get_or_calculate_peer(
+        cache: dict[str, Any],
+        ticker: str,
+        peers: list[str],
+    ) -> tuple[dict[str, Any], bool]:
+        company = CacheHelpers.company(cache, ticker)
+        comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
+        peer_key = ",".join(sorted(p.strip().upper() for p in peers))
+        cached = comps_cache.get("peer")
+        if cached and cached.get("peer_key") == peer_key:
+            return cached["payload"], True
+
+        payload = comparables.peer_comps(cache, ticker, peers)
+        comps_cache["peer"] = {
+            "payload": payload,
+            "peer_key": peer_key,
+            "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
+            "last_updated": CacheHelpers.now(),
+        }
+        return payload, False
+
+    @staticmethod
+    def get_or_calculate_damodaran(
+        cache: dict[str, Any],
+        ticker: str,
+    ) -> tuple[dict[str, Any], bool]:
+        company = CacheHelpers.company(cache, ticker)
+        comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
+        cached = comps_cache.get("damodaran")
+        if cached:
+            return cached["payload"], True
+
+        payload = comparables.damodaran_fallback(cache, ticker)
+        comps_cache["damodaran"] = {
+            "payload": payload,
+            "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
+            "last_updated": CacheHelpers.now(),
+        }
+        return payload, False
+
+    @staticmethod
+    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_COMPARABLES, {})
+        if not entry:
+            return None
+        result = {
+            key: {"available": True}
+            for key in ("peer", "damodaran")
+            if entry.get(key)
+        }
+        return result or None
+
+    @staticmethod
+    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
+        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_COMPARABLES, {})
+        if not entry:
+            return None
+        result = {
+            key: data["payload"]
+            for key in ("peer", "damodaran")
+            if (data := entry.get(key)) and data.get("payload") is not None
+        }
+        return result or None
 
 
-def _company(cache: dict[str, Any], ticker: str) -> dict[str, Any]:
-    key = _ticker(ticker)
-    companies = cache.setdefault(CACHE_COMPANIES, {})
-    return companies.setdefault(
-        key,
-        {
-            "ticker": key,
-            "name": None,
+# ─── Registry ─────────────────────────────────────────────────────────────────
+
+COMPANY_TOOL_CACHES = [
+    FinancialsCache,
+    MarketDataCache,
+    GrowthCache,
+    RatiosCache,
+    DCFCache,
+    CompsCache,
+]
+
+
+# ─── Catalog and payload builders ─────────────────────────────────────────────
+
+def build_data_catalog(cache: dict[str, Any]) -> dict[str, Any]:
+    """Build a compact availability summary for model prompts."""
+    catalog = empty_data_catalog()
+
+    for ticker in sorted((cache.get(CACHE_COMPANIES) or {})):
+        company = cache[CACHE_COMPANIES][ticker]
+        entry = {
+            "ticker": ticker,
+            "name": company.get("name"),
             CACHE_SEARCHED: {},
             CACHE_CALCULATED: {},
-        },
-    )
-
-
-def _calculated_entry(
-    payload: dict[str, Any],
-    hf: HistoricalFinancials,
-    depends_on: list[str],
-) -> dict[str, Any]:
-    coverage = _financials_coverage(hf, len(hf.periods))
-    return {
-        "payload": payload,
-        "coverage": coverage,
-        "depends_on": depends_on,
-        "source_fingerprint": {
-            CACHE_FINANCIALS: coverage,
-        },
-        "last_updated": _now(),
-    }
-
-
-def _financials_coverage(hf: HistoricalFinancials, span: int) -> dict[str, Any]:
-    return {
-        "fiscal_years": [_fiscal_year_key(p.fiscal_year) for p in hf.periods],
-        "period_ends": [p.period_end.isoformat() for p in hf.periods],
-        "max_span": max(int(span), len(hf.periods)),
-    }
-
-
-def _coverage_satisfies(coverage: dict[str, Any], span: int) -> bool:
-    return int(coverage.get("max_span") or 0) >= int(span)
-
-
-def _catalog_leaf_map(source: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: {
-            "available": True,
-            "fiscal_years": value.get("coverage", {}).get("fiscal_years", []),
         }
-        for key, value in source.items()
-    }
+        for tc in COMPANY_TOOL_CACHES:
+            result = tc.catalog_entry(company)
+            if result is not None:
+                entry[tc.BUCKET][tc.CACHE_KEY] = result
+        catalog[CACHE_COMPANIES].append(entry)
+
+    catalog[CACHE_GLOBAL]["sector_data_years"] = SectorDataCache.catalog_entry(
+        cache.get(CACHE_GLOBAL, {})
+    )
+    return catalog
 
 
-def _financials_summary(ticker: str, coverage: dict[str, Any]) -> str:
-    years = coverage.get("fiscal_years", [])
-    if not years:
-        return f"Historical financial statements for {ticker} are available."
-    return f"Historical financial statements for {ticker} are available for {years[0]}-{years[-1]}."
+def build_data_payload(cache: dict[str, Any]) -> dict[str, Any]:
+    """Build the detailed cached data payload used by response generation."""
+    payload: dict[str, Any] = {}
 
+    for ticker, company in (cache.get(CACHE_COMPANIES) or {}).items():
+        entry: dict[str, Any] = {}
+        for tc in COMPANY_TOOL_CACHES:
+            result = tc.payload_entry(company)
+            if result is not None:
+                entry[tc.CACHE_KEY] = result
+        if entry:
+            payload[ticker] = entry
 
-def _dump_model(model: BaseModel) -> dict[str, Any]:
-    return model.model_dump(mode="json")
+    sector_data = SectorDataCache.payload_entry(cache.get(CACHE_GLOBAL) or {})
+    if sector_data:
+        payload["sector_data"] = sector_data
 
-
-def _ticker(ticker: str) -> str:
-    return str(ticker).strip().upper()
-
-
-def _fiscal_year_key(year: Any) -> str:
-    return str(year).strip().upper().removeprefix("FY")
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return payload
