@@ -1,9 +1,10 @@
-from backend.core.llm import CHAT_MODEL
+"""Agent graph state schema and the data_cache merge reducer."""
 
-from langchain.messages import AnyMessage
 import operator
 from copy import deepcopy
 from typing import Any
+
+from langchain.messages import AnyMessage
 from typing_extensions import Annotated, NotRequired, TypedDict
 
 

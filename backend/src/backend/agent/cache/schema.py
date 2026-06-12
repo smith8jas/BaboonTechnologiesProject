@@ -1,13 +1,6 @@
-"""Shared constants for agent tool specs and state-cache structure."""
+"""Shared constants describing the state-cache structure."""
 
 from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any
-
-
-PHASE_RESEARCH = "research"
-PHASE_CALCULATION = "calculation"
 
 CACHE_COMPANIES = "companies"
 CACHE_GLOBAL = "global"
@@ -34,25 +27,3 @@ SCENARIO_DEFAULT = "default"
 DEPENDENCY_FINANCIALS = f"{CACHE_SEARCHED}.{CACHE_FINANCIALS}"
 DEPENDENCY_MARKET_DATA = f"{CACHE_SEARCHED}.{CACHE_MARKET_DATA}"
 DEPENDENCY_SECTOR_DATA = f"{CACHE_GLOBAL}.{CACHE_SECTOR_DATA_BY_YEAR}"
-
-
-@dataclass(frozen=True)
-class ToolSpec:
-    tool: Any
-    group: str
-    route: str
-    capability: str
-    phase: str
-
-    @property
-    def name(self) -> str:
-        return self.tool.name
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        return {
-            "group": self.group,
-            "route": self.route,
-            "capability": self.capability,
-            "phase": self.phase,
-        }
