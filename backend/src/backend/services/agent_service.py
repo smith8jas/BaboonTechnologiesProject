@@ -22,7 +22,7 @@ def chat(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.agent.graph import activate_agent
+    from backend.agent.runtime import activate_agent
 
     response = activate_agent(
         text,
@@ -46,7 +46,7 @@ async def chat_async(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.agent.graph import activate_agent_async
+    from backend.agent.runtime import activate_agent_async
 
     response = await activate_agent_async(
         text,
