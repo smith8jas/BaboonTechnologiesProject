@@ -49,7 +49,7 @@ class DCFCache:
         md, _ = MarketDataCache.get_or_fetch(cache, ticker, True)
         sd, _ = SectorDataCache.get_or_fetch(cache, year)
         assumptions = dcf_engine.build_assumptions(hf, md, sd)
-        valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd)
+        valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
         result = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
         payload = CacheHelpers.dump_model(result)
         dcf_cache[CACHE_SCENARIOS][SCENARIO_DEFAULT] = {
