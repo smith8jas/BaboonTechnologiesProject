@@ -72,10 +72,11 @@ def build_assumptions(
     return Assumptions(**derived)
 
 
-def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorData) -> ValuationInputs:
+def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorData, a: Assumptions) -> ValuationInputs:
     """Combine company, market, and sector data into WACC and equity bridge inputs."""
     latest_bs = hf.periods[-1].balance_sheet
     total_debt = (latest_bs.long_term_debt or 0.0) + (latest_bs.short_term_debt or 0.0)
+    total_cash = (latest_bs.cash)
 
     falled_back_to_risk_free_rate = False
 
@@ -85,9 +86,9 @@ def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorD
     else:
         # Level 1: IS interest_expense / long_term_debt
         rates = [
-            abs(p.income_statement.interest_expense) / p.balance_sheet.long_term_debt
+            abs(p.income_statement.interest_expense) / (p.balance_sheet.short_term_debt + p.balance_sheet.long_term_debt)
             for p in hf.periods
-            if p.income_statement.interest_expense and p.balance_sheet.long_term_debt
+            if p.income_statement.interest_expense and p.balance_sheet.long_term_debt and p.balance_sheet.short_term_debt
         ]
         # Level 2: CFS interest_expense / long_term_debt
         if not rates:
@@ -116,15 +117,6 @@ def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorD
             cost_of_debt = md.risk_free_rate + 0.015
             falled_back_to_risk_free_rate = True
 
-    # Tax rate — trailing average inline
-    tax_rates = [
-        p.income_statement.tax_expense / p.income_statement.ebit
-        for p in hf.periods
-        if p.income_statement.tax_expense is not None
-        and p.income_statement.ebit not in (None, 0)
-    ]
-    tax_rate = sum(tax_rates) / len(tax_rates) if tax_rates else None
-
     return ValuationInputs(
         ticker=hf.ticker,
         risk_free_rate=md.risk_free_rate,
@@ -132,9 +124,10 @@ def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorD
         equity_risk_premium=sd.equity_risk_premium,
         cost_of_debt=cost_of_debt,
         market_cap=md.market_cap,
+        total_cash=total_cash,
         shares_outstanding=md.shares_outstanding,
         total_debt=total_debt,
-        tax_rate=tax_rate,
+        tax_rate=a.tax_rate,
         long_term_growth_rate=sd.long_term_growth_rate,
         falled_back_to_risk_free_rate=falled_back_to_risk_free_rate,
     )
@@ -250,7 +243,7 @@ def run_dcf(
  
     # 4. Bridge to equity
     enterprise_value          = sum(pv_ufcf) + pv_terminal
-    equity_value              = enterprise_value - inputs.total_debt
+    equity_value              = enterprise_value - inputs.total_debt + inputs.total_cash
     intrinsic_value_per_share = equity_value / inputs.shares_outstanding
  
     base_fy      = base_period.fiscal_year or str(base_period.period_end.year)
@@ -264,6 +257,7 @@ def run_dcf(
         projection_years=projection_years,
         intrinsic_value_per_share=intrinsic_value_per_share,
         enterprise_value=enterprise_value,
+        equity_value=equity_value,
         terminal_value=terminal_value,
         pv_terminal=pv_terminal,
         tv_pct_of_ev=tv_pct_of_ev,

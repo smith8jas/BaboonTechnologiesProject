@@ -234,6 +234,7 @@ class ValuationInputs(BaseModel):
     long_term_growth_rate:          float               # From industry growth (or GDP growth)
     projection_years:               int = 5
     falled_back_to_risk_free_rate:  bool = False
+    total_cash:                     float
 
     @computed_field
     @property
@@ -275,6 +276,7 @@ class DCFOutput(BaseModel):
     pv_terminal:                    float
     tv_pct_of_ev:                   float
     enterprise_value:               float
+    equity_value:                   float
     projected_fcff:                 list[float]
     pv_fcff:                        list[float]
     projected_revenue:              list[float]
