@@ -19,7 +19,7 @@ async def react_node(state: AgentState):
     logger.info("React Node Activated")
     local_prompt = deep_react_prompt if is_deep_plan() else react_prompt
     react_count = state.get("react_iterations", 0)
-    print(f"[REACT] Iteration {react_count + 1} | {'deep_react_prompt' if is_deep_plan() else 'react_prompt'} active")
+    #print(f"[REACT] Iteration {react_count + 1} | {'deep_react_prompt' if is_deep_plan() else 'react_prompt'} active")
 
     if react_count >= DEFAULT_RECURSION_LIMIT - 2:
         return {
@@ -45,25 +45,25 @@ async def react_node(state: AgentState):
         has_scrape = any(tc.get("name") == SCRAPE_TOOL_NAME for tc in tool_calls)
         has_non_scrape = any(tc.get("name") != SCRAPE_TOOL_NAME for tc in tool_calls)
         if has_scrape and has_non_scrape:
-            print("[REACT] → needs_scrape_and_tools")
+            #print("[REACT] → needs_scrape_and_tools")
             return {
                 "messages": [react_message],
                 "plan_status": "needs_scrape_and_tools",
                 "react_iterations": next_count,
             }
         if has_scrape:
-            print("[REACT] → needs_scrape")
+            #print("[REACT] → needs_scrape")
             return {
                 "messages": [react_message],
                 "plan_status": "needs_scrape",
                 "react_iterations": next_count,
             }
-        print("[REACT] → needs_tools")
+        #print("[REACT] → needs_tools")
         return {
             "messages": [react_message],
             "plan_status": "needs_tools",
             "react_iterations": next_count,
         }
 
-    print("[REACT] → ready_to_respond")
+    #print("[REACT] → ready_to_respond")
     return {"plan_status": "ready_to_respond", "react_iterations": next_count}

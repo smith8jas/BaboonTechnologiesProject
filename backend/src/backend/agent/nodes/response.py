@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 async def response_node(state: AgentState):
     """Generate the final user-facing answer from messages and cached data."""
     logger.info("Response Node Activated")
-    print("[RESPONSE] Generating final answer...")
+    #print("[RESPONSE] Generating final answer...")
     local_prompt = deep_response_prompt if is_deep_plan() else response_prompt
     payload = build_data_payload(state_cache(state))
     if guidance := state.get("tool_guidance"):

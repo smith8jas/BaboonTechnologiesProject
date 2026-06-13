@@ -9,10 +9,18 @@ Part 2 — tool layer: tools write through the injected data_cache and report
 Part 3 — state evolution: the data_cache merges across sequential and parallel
 node updates the way the LangGraph merge_cache reducer applies them, and the
 catalog/payload views grow accordingly.
+
+Part 4 — tools_node: end-to-end orchestration through the node interface.
+Covers single calls, cache hits, parallel multi-ticker merges, the global
+(no-ticker) path, and unknown-tool error handling.
 """
 
+import asyncio
+import json
 from copy import deepcopy
 from unittest.mock import MagicMock, patch
+
+from langchain_core.messages import AIMessage
 
 from backend.agent.cache import (
     CompsCache,
@@ -376,3 +384,154 @@ def test_payload_skips_companies_with_no_data():
     cache = empty_data_cache()
     cache["companies"]["EMPTY"] = {"ticker": "EMPTY", "name": None, "searched": {}, "calculated": {}}
     assert build_data_payload(cache) == {}
+
+
+# ---------------------------------------------------------------------------
+# Part 4 — tools_node: end-to-end orchestration through the node interface
+# ---------------------------------------------------------------------------
+
+from backend.agent.nodes.tools import tools_node
+
+
+def _make_tools_state(tool_calls: list[dict], existing_cache: dict | None = None) -> dict:
+    """Minimal AgentState sufficient for tools_node to run.
+
+    tools_node only reads two things from state:
+      - messages: scanned in reverse for the last AIMessage with tool_calls
+      - data_cache: the current cache snapshot (absent → starts empty)
+    """
+    state = {
+        # latest_tool_calls() walks messages in reverse and returns the
+        # tool_calls list from the first AIMessage that has one
+        "messages": [AIMessage(content="", tool_calls=tool_calls)],
+        # required AgentState fields that tools_node itself does not read
+        "context": "",
+        "current_year": 2024,
+        "available_tools": {},
+    }
+    if existing_cache is not None:
+        # inject a pre-built cache so we can test cache-hit behaviour
+        state["data_cache"] = existing_cache
+    return state
+
+
+def test_tools_node_single_call_populates_cache():
+    """A single get_financials call populates data_cache and data_catalog."""
+    state = _make_tools_state([
+        # one tool call: name maps to TOOLS_BY_NAME, id is echoed on the ToolMessage
+        {"name": "get_financials", "args": {"ticker": "AAPL", "span": 3}, "id": "tc_1"},
+    ])
+
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
+        # fake out the external data fetch so no real HTTP call is made
+        mock_fin.get_cached_financials.return_value = _mock_hf("AAPL", [2022, 2023, 2024])
+        # tools_node is a coroutine — asyncio.run() drives it synchronously
+        result = asyncio.run(tools_node(state))
+
+    # node must return all three keys
+    assert "data_cache" in result
+    assert "data_catalog" in result
+    assert "messages" in result
+
+    # AAPL financials should be stored under companies in the cache
+    assert "AAPL" in result["data_cache"]["companies"]
+    assert "financials" in result["data_cache"]["companies"]["AAPL"]["searched"]
+
+    # catalog should reflect that AAPL is now available
+    tickers = [entry["ticker"] for entry in result["data_catalog"]["companies"]]
+    assert "AAPL" in tickers
+
+    # exactly one ToolMessage, tied to the call id we passed in
+    assert len(result["messages"]) == 1
+    assert result["messages"][0].name == "get_financials"
+    assert result["messages"][0].tool_call_id == "tc_1"
+
+
+def test_tools_node_cache_hit_on_second_run():
+    """When data_cache already holds the data, the tool reports source=cache and makes no external call."""
+    # build a cache as if a previous turn had already fetched AAPL financials
+    pre_cache = empty_data_cache()
+    FinancialsCache._store(pre_cache, _mock_hf("AAPL", [2022, 2023, 2024]), span=3)
+
+    # inject that pre-populated cache into the state
+    state = _make_tools_state(
+        [{"name": "get_financials", "args": {"ticker": "AAPL", "span": 3}, "id": "tc_2"}],
+        existing_cache=pre_cache,
+    )
+
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
+        mock_fin.get_cached_financials.return_value = _mock_hf("AAPL", [2022, 2023, 2024])
+        result = asyncio.run(tools_node(state))
+        # the external service must not have been called — the cache handled it
+        mock_fin.get_cached_financials.assert_not_called()
+
+    # ToolMessage content should confirm the data came from cache, not external
+    content = json.loads(result["messages"][0].content)
+    assert content["source"] == "cache"
+
+
+def test_tools_node_two_tickers_parallel_merge():
+    """Two calls for different tickers run in parallel and both survive the branch merge."""
+    state = _make_tools_state([
+        # two calls with different tickers — _group_calls_by_ticker puts each in its own group
+        {"name": "get_financials", "args": {"ticker": "AAPL", "span": 3}, "id": "tc_aapl"},
+        {"name": "get_financials", "args": {"ticker": "MSFT", "span": 3}, "id": "tc_msft"},
+    ])
+
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
+        # side_effect lets us return ticker-specific data on each call
+        mock_fin.get_cached_financials.side_effect = (
+            lambda ticker, span, **_: _mock_hf(ticker, [2022, 2023, 2024])
+        )
+        result = asyncio.run(tools_node(state))
+
+    cache = result["data_cache"]
+
+    # both tickers must be present after the parallel-branch merge
+    assert "AAPL" in cache["companies"]
+    assert "MSFT" in cache["companies"]
+
+    # one ToolMessage per call — order may vary since they ran in parallel
+    assert len(result["messages"]) == 2
+    call_ids = {msg.tool_call_id for msg in result["messages"]}
+    assert call_ids == {"tc_aapl", "tc_msft"}
+
+
+def test_tools_node_global_call_no_ticker():
+    """get_sector_data has no ticker arg so it goes through the global-calls path, not a ticker group."""
+    state = _make_tools_state([
+        # year is the only arg — _group_calls_by_ticker keys this under None (global)
+        {"name": "get_sector_data", "args": {"year": 2024}, "id": "tc_sector"},
+    ])
+
+    with patch("backend.agent.cache.sector_data.financials_service") as mock_sector:
+        mock_sector.get_sector_data.return_value = _mock_sd()
+        result = asyncio.run(tools_node(state))
+
+    # sector data lives in cache["global"]["sector_data_by_year"], not under a company
+    assert "2024" in result["data_cache"]["global"]["sector_data_by_year"]
+
+    # single ToolMessage for the one call
+    assert len(result["messages"]) == 1
+    assert result["messages"][0].tool_call_id == "tc_sector"
+
+
+def test_tools_node_unknown_tool_returns_error_message():
+    """An unrecognised tool name produces a ToolMessage with error JSON rather than raising."""
+    state = _make_tools_state([
+        # name does not exist in TOOLS_BY_NAME
+        {"name": "nonexistent_tool", "args": {}, "id": "tc_bad"},
+    ])
+
+    # no patch needed — the node handles missing tools internally
+    result = asyncio.run(tools_node(state))
+
+    # node must not raise; it should still return a ToolMessage for the call
+    assert len(result["messages"]) == 1
+    msg = result["messages"][0]
+    assert msg.tool_call_id == "tc_bad"
+
+    # content should be JSON with an "error" key and a list of valid tool names
+    content = json.loads(msg.content)
+    assert "error" in content
+    assert "available_tools" in content

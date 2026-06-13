@@ -14,20 +14,22 @@ from .state import AgentState
 
 def initialize_agent():
     """Build and compile the state graph used by API and CLI entrypoints."""
+    
+    #Setting the state class in the agent
     agent_builder = StateGraph(AgentState)
 
+    #Creating the graph nodes
     agent_builder.add_node("router", router)
     agent_builder.add_node("plan_node", plan_node)
     agent_builder.add_node("tools", tools_node)
     agent_builder.add_node("scrape_node", scrape_node)
     agent_builder.add_node("react_node", react_node)
     agent_builder.add_node("response_node", response_node)
-
+    
+    #Creating the graph edges that connect the different nodees
     agent_builder.add_edge(START, "router")
     agent_builder.add_conditional_edges("router", route_after_router, {"plan_node": "plan_node", "end": END})
-    agent_builder.add_conditional_edges(
-        "plan_node",
-        route_after_plan,
+    agent_builder.add_conditional_edges("plan_node", route_after_plan, 
         {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
     )
     agent_builder.add_edge("tools", "react_node")
@@ -39,4 +41,5 @@ def initialize_agent():
     )
     agent_builder.add_edge("response_node", END)
 
+    #Returning compiled graph agent with MemorySaver to remember previous messages of the same conversation
     return agent_builder.compile(checkpointer=MemorySaver())

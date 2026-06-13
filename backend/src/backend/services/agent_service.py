@@ -22,13 +22,16 @@ def chat(
 
     resolved_thread_id = thread_id or f"api-session-{uuid4()}"
 
-    from backend.agent.runtime import activate_agent
+    import asyncio
+    from backend.agent.runtime import activate_agent_async
 
-    response = activate_agent(
+    response = asyncio.run(
+        activate_agent_async(
         text,
         _agent(),
         thread_id=resolved_thread_id,
         recursion_limit=recursion_limit,
+        )
     )
     return resolved_thread_id, response
 

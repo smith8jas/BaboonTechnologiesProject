@@ -29,17 +29,17 @@ class ScrapeDecision(BaseModel):
 
 async def scrape_node(state: AgentState):
     logger.info("Scrape Node Activated")
-    print("[SCRAPE] scrape_node activated")
+    #print("[SCRAPE] scrape_node activated")
     tool_calls = latest_tool_calls(state)
     scrape_calls = [tc for tc in tool_calls if tc.get("name") == SCRAPE_TOOL_NAME]
-    print(f"[SCRAPE] {len(scrape_calls)} scrape call(s)")
+    #print(f"[SCRAPE] {len(scrape_calls)} scrape call(s)")
 
     async def _process_one(call: dict) -> tuple[ToolMessage, list[dict]]:
         args = call.get("args") or {}
         topic = args.get("topic", "")
         max_results = min(int(args.get("max_results", 3)), SCRAPE_LIMIT)
         tool_call_id = call.get("id") or ""
-        print(f"[SCRAPE] Topic: {topic!r}  max_results={max_results}")
+        #print(f"[SCRAPE] Topic: {topic!r}  max_results={max_results}")
 
         # Use a clean system-only prompt to avoid sending unresolved tool_calls
         # from the plan message into the structured-output call.
@@ -56,7 +56,7 @@ async def scrape_node(state: AgentState):
             preferred_source_types = []
             avoid = []
 
-        print(f"[SCRAPE] Expanded to {len(queries)} quer(ies)")
+        #print(f"[SCRAPE] Expanded to {len(queries)} quer(ies)")
 
         async def _run_query(query: str) -> tuple[str, list, Exception | None]:
             try:
@@ -78,9 +78,9 @@ async def scrape_node(state: AgentState):
         for query, hits, exc in query_results:
             if exc is not None:
                 logger.warning("Scrape failed for query %r: %s", query, exc)
-                print(f"[SCRAPE] ERROR for query {query!r}: {exc}")
+                #print(f"[SCRAPE] ERROR for query {query!r}: {exc}")
                 continue
-            print(f"[SCRAPE] Query {query!r}: {len(hits)} hit(s) returned")
+            #print(f"[SCRAPE] Query {query!r}: {len(hits)} hit(s) returned")
             for r in hits:
                 entry = {
                     "query": query,
@@ -101,7 +101,7 @@ async def scrape_node(state: AgentState):
             if url not in seen or entry["confidence"] > seen[url]["confidence"]:
                 seen[url] = entry
         top = sorted(seen.values(), key=lambda x: x["confidence"], reverse=True)[:5]
-        print(f"[SCRAPE] Top {len(top)} unique result(s) for tool message  ({len(new_entries_local)} added to history)")
+        #print(f"[SCRAPE] Top {len(top)} unique result(s) for tool message  ({len(new_entries_local)} added to history)")
         content = json.dumps(
             {"source": "web", "research_goal": research_goal, "queries": queries, "results": top},
             default=str,
