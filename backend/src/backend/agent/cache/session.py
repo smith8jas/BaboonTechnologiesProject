@@ -17,9 +17,21 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
+import types as _types
+from datetime import date as _date, datetime, timezone
+from typing import Union, get_args, get_origin
 
 import duckdb
+
+from backend.processing.schema import (
+    BalanceSheet,
+    CashFlowStatement,
+    CompanyMetadata,
+    IncomeStatement,
+    MarketData,
+    PerShare,
+    SectorData,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,175 +39,154 @@ logger = logging.getLogger(__name__)
 _REGISTRY: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
-# Schema — one CREATE TABLE per data type.
-# All writers use INSERT OR REPLACE (upsert), so these tables are append-safe.
+# Schema generation — column names and types derived from Pydantic models
+# so the DDL stays in sync with processing/schema.py automatically.
 # ---------------------------------------------------------------------------
 
-_DDL: tuple[str, ...] = (
-    # One row per company — populated alongside the first financials fetch.
-    """
+_DUCK_TYPE_MAP: dict = {
+    float: "DOUBLE",
+    int:   "INTEGER",
+    str:   "VARCHAR",
+    bool:  "BOOLEAN",
+    _date: "DATE",
+}
+
+
+def _duck_type(annotation) -> str:
+    """Resolve a Python type annotation to a DuckDB column type string."""
+    origin = get_origin(annotation)
+    # Handle both `Optional[X]` (typing.Union) and `X | None` (types.UnionType on 3.10+)
+    if origin is Union or (
+        hasattr(_types, "UnionType") and isinstance(annotation, _types.UnionType)
+    ):
+        non_none = [a for a in get_args(annotation) if a is not type(None)]
+        if non_none:
+            return _duck_type(non_none[0])
+    return _DUCK_TYPE_MAP.get(annotation, "VARCHAR")
+
+
+def _model_cols(model: type, rename: dict[str, str] | None = None) -> list[str]:
+    """Return DDL column lines derived from a Pydantic model's fields and computed fields."""
+    rename = rename or {}
+    cols = []
+    for name, field in model.model_fields.items():
+        col_name = rename.get(name, name)
+        cols.append(f"        {col_name:<35} {_duck_type(field.annotation)}")
+    for name, computed in model.model_computed_fields.items():
+        col_name = rename.get(name, name)
+        cols.append(f"        {col_name:<35} {_duck_type(computed.return_type)}")
+    return cols
+
+
+def _join(*column_lists: list[str]) -> str:
+    return ",\n".join(col for cols in column_lists for col in cols)
+
+
+# CashFlowStatement shares two field names with IncomeStatement.
+# Only those two are prefixed; the remaining CF fields have no collision.
+_CF_RENAME = {"net_income": "cf_net_income", "interest_expense": "cf_interest_expense"}
+
+
+def _build_ddl() -> tuple[str, ...]:
+    """Build all CREATE TABLE statements, deriving columns from Pydantic schema models."""
+    return (
+        # One row per company — populated alongside the first financials fetch.
+        f"""
     CREATE TABLE IF NOT EXISTS companies (
-        ticker                  VARCHAR PRIMARY KEY,
-        name                    VARCHAR,
-        cik                     VARCHAR,
-        sic                     INTEGER,
-        industry                VARCHAR,
-        fiscal_year_end         VARCHAR,
-        entity_type             VARCHAR,
-        filer_category          VARCHAR,
-        state_of_incorporation  VARCHAR,
-        website                 VARCHAR,
-        phone                   VARCHAR,
-        last_updated            TIMESTAMPTZ
+        ticker                              VARCHAR PRIMARY KEY,
+{_join(_model_cols(CompanyMetadata))},
+        last_updated                        TIMESTAMPTZ
     )
     """,
 
-    # One row per (ticker, fiscal_year).
-    # Income-statement, balance-sheet, cash-flow, and per-share fields are
-    # all flattened into columns.  Cash-flow fields that share names with the
-    # income statement (net_income, interest_expense) are prefixed with cf_.
-    """
+        # One row per (ticker, fiscal_year) — all statement fields flattened into columns.
+        # Cash-flow fields that share names with IS (net_income, interest_expense) are cf_-prefixed.
+        f"""
     CREATE TABLE IF NOT EXISTS financials (
-        ticker                      VARCHAR  NOT NULL,
-        fiscal_year                 VARCHAR  NOT NULL,
-        period_end                  DATE,
-        -- income statement
-        revenue                     DOUBLE,
-        cogs                        DOUBLE,
-        gross_profit                DOUBLE,
-        ebit                        DOUBLE,
-        ebiat                       DOUBLE,
-        ebitda                      DOUBLE,
-        tax_expense                 DOUBLE,
-        net_income                  DOUBLE,
-        interest_expense            DOUBLE,
-        depreciation_expense        DOUBLE,
-        -- balance sheet
-        total_current_assets        DOUBLE,
-        cash                        DOUBLE,
-        total_assets                DOUBLE,
-        inventory                   DOUBLE,
-        accounts_receivable         DOUBLE,
-        accounts_payable            DOUBLE,
-        short_term_debt             DOUBLE,
-        long_term_debt              DOUBLE,
-        total_current_liabilities   DOUBLE,
-        total_liabilities           DOUBLE,
-        total_equity                DOUBLE,
-        net_working_capital         DOUBLE,
-        -- cash flow (prefixed to avoid collision with income statement columns)
-        cf_net_income               DOUBLE,
-        cf_interest_expense         DOUBLE,
-        capex                       DOUBLE,
-        depreciation_amortization   DOUBLE,
-        cfo                         DOUBLE,
-        fcf                         DOUBLE,
-        -- per share
-        basic_shares                DOUBLE,
-        diluted_shares              DOUBLE,
-        last_updated                TIMESTAMPTZ,
+        ticker                              VARCHAR  NOT NULL,
+        fiscal_year                         VARCHAR  NOT NULL,
+        period_end                          DATE,
+{_join(
+    _model_cols(IncomeStatement),
+    _model_cols(BalanceSheet),
+    _model_cols(CashFlowStatement, rename=_CF_RENAME),
+    _model_cols(PerShare),
+)},
+        last_updated                        TIMESTAMPTZ,
         PRIMARY KEY (ticker, fiscal_year)
     )
     """,
 
-    # One row per ticker — current snapshot, not time-series.
-    """
+        # One row per ticker — current snapshot, not time-series.
+        f"""
     CREATE TABLE IF NOT EXISTS market_data (
-        ticker              VARCHAR PRIMARY KEY,
-        current_price       DOUBLE,
-        beta                DOUBLE,
-        shares_outstanding  DOUBLE,
-        market_cap          DOUBLE,
-        risk_free_rate      DOUBLE,
-        include_rfr         BOOLEAN,
-        last_updated        TIMESTAMPTZ
+        ticker                              VARCHAR PRIMARY KEY,
+{_join(_model_cols(MarketData))},
+        include_rfr                         BOOLEAN,
+        last_updated                        TIMESTAMPTZ
     )
     """,
 
-    # One row per year — global, not per-ticker.
-    """
+        # One row per year — global Damodaran sector data, not per-ticker.
+        f"""
     CREATE TABLE IF NOT EXISTS sector_data (
-        year                    INTEGER PRIMARY KEY,
-        equity_risk_premium     DOUBLE,
-        long_term_growth_rate   DOUBLE,
-        last_updated            TIMESTAMPTZ
+        year                                INTEGER PRIMARY KEY,
+{_join(_model_cols(SectorData))},
+        last_updated                        TIMESTAMPTZ
     )
     """,
 
-    # One row per (ticker, fiscal_year, statement, field).
-    # statement ∈ {"income_statement", "balance_sheet"}
-    """
+        # growth_rates, ratios, dcf, comparables store computed payloads as JSON —
+        # no Pydantic model maps directly to these column layouts.
+        """
     CREATE TABLE IF NOT EXISTS growth_rates (
-        ticker          VARCHAR  NOT NULL,
-        fiscal_year     VARCHAR  NOT NULL,
-        statement       VARCHAR  NOT NULL,
-        field           VARCHAR  NOT NULL,
-        value           DOUBLE,
-        span            INTEGER,
-        last_updated    TIMESTAMPTZ,
-        PRIMARY KEY (ticker, fiscal_year, statement, field)
+        ticker       VARCHAR  NOT NULL,
+        statement    VARCHAR  NOT NULL,
+        payload      JSON,
+        span         INTEGER,
+        last_updated TIMESTAMPTZ,
+        PRIMARY KEY (ticker, statement)
     )
     """,
 
-    # One row per (ticker, fiscal_year, ratio_type, field).
-    # ratio_type ∈ {"liquidity", "solvency", "profitability", "efficiency"}
-    """
+        """
     CREATE TABLE IF NOT EXISTS ratios (
-        ticker          VARCHAR  NOT NULL,
-        fiscal_year     VARCHAR  NOT NULL,
-        ratio_type      VARCHAR  NOT NULL,
-        field           VARCHAR  NOT NULL,
-        value           DOUBLE,
-        span            INTEGER,
-        last_updated    TIMESTAMPTZ,
-        PRIMARY KEY (ticker, fiscal_year, ratio_type, field)
+        ticker       VARCHAR  NOT NULL,
+        ratio_type   VARCHAR  NOT NULL,
+        payload      JSON,
+        span         INTEGER,
+        last_updated TIMESTAMPTZ,
+        PRIMARY KEY (ticker, ratio_type)
     )
     """,
 
-    # One row per (ticker, scenario).
-    # List-valued DCF outputs are stored as native DuckDB arrays.
-    """
+        """
     CREATE TABLE IF NOT EXISTS dcf (
-        ticker                          VARCHAR  NOT NULL,
-        scenario                        VARCHAR  NOT NULL,
-        fiscal_year                     VARCHAR,
-        intrinsic_value_per_share       DOUBLE,
-        terminal_value                  DOUBLE,
-        pv_terminal                     DOUBLE,
-        tv_pct_of_ev                    DOUBLE,
-        enterprise_value                DOUBLE,
-        projection_years                VARCHAR[],
-        projected_fcff                  DOUBLE[],
-        pv_fcff                         DOUBLE[],
-        projected_revenue               DOUBLE[],
-        projected_ebit                  DOUBLE[],
-        projected_ebiat                 DOUBLE[],
-        projected_da                    DOUBLE[],
-        projected_capex                 DOUBLE[],
-        projected_delta_nwc             DOUBLE[],
-        pv_factors                      DOUBLE[],
-        falled_back_to_risk_free_rate   BOOLEAN,
-        sector_year                     INTEGER,
-        span                            INTEGER,
-        last_updated                    TIMESTAMPTZ,
+        ticker       VARCHAR  NOT NULL,
+        scenario     VARCHAR  NOT NULL,
+        fiscal_year  VARCHAR,
+        sector_year  INTEGER,
+        span         INTEGER,
+        payload      JSON,
+        last_updated TIMESTAMPTZ,
         PRIMARY KEY (ticker, scenario)
     )
     """,
 
-    # One row per (ticker, method).
-    # method ∈ {"peer", "damodaran"}
-    # payload stored as JSON because its shape varies by method.
-    """
+        """
     CREATE TABLE IF NOT EXISTS comparables (
-        ticker          VARCHAR  NOT NULL,
-        method          VARCHAR  NOT NULL,
-        peer_key        VARCHAR,
-        payload         JSON,
-        last_updated    TIMESTAMPTZ,
+        ticker       VARCHAR  NOT NULL,
+        method       VARCHAR  NOT NULL,
+        peer_key     VARCHAR,
+        payload      JSON,
+        last_updated TIMESTAMPTZ,
         PRIMARY KEY (ticker, method)
     )
     """,
-)
+    )
+
+
+_DDL: tuple[str, ...] = _build_ddl()
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +206,7 @@ def create_session(session_id: str) -> None:
         prefix=f"agent_{session_id[:8]}_",
     )
     os.close(fd)
+    os.unlink(path)  # mkstemp creates an empty file; DuckDB needs a non-existent path to init fresh
 
     conn = duckdb.connect(path)
     try:

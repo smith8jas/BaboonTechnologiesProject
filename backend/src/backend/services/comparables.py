@@ -19,6 +19,7 @@ import statistics
 from pathlib import Path
 from typing import Optional
 
+import duckdb
 import pandas as pd
 
 from backend.adapters.damodaran import fetch_ev_sales, fetch_price_sales, fetch_trailing_pe
@@ -197,18 +198,18 @@ def _value_band(implied: dict[str, float | None]) -> dict:
 # Path A — peer-based comps
 # ---------------------------------------------------------------------------
 
-def peer_comps(cache: dict, ticker: str, peers: list[str]) -> dict:
+def peer_comps(conn: duckdb.DuckDBPyConnection, ticker: str, peers: list[str]) -> dict:
     from backend.agent.cache import FinancialsCache, MarketDataCache
-    target_fin, _ = FinancialsCache.get_or_fetch(cache, ticker)
-    target_mkt, _ = MarketDataCache.get_or_fetch(cache, ticker)
+    target_fin, _ = FinancialsCache.get_or_fetch(conn, ticker)
+    target_mkt, _ = MarketDataCache.get_or_fetch(conn, ticker)
 
     peer_results: list[dict] = []
     dropped: list[dict] = []
 
     for peer in peers:
         try:
-            peer_fin, _ = FinancialsCache.get_or_fetch(cache, peer)
-            peer_mkt, _ = MarketDataCache.get_or_fetch(cache, peer)
+            peer_fin, _ = FinancialsCache.get_or_fetch(conn, peer)
+            peer_mkt, _ = MarketDataCache.get_or_fetch(conn, peer)
             result = _compute_multiples(peer_fin, peer_mkt)
             result["ticker"] = peer
             peer_results.append(result)
@@ -239,10 +240,10 @@ def peer_comps(cache: dict, ticker: str, peers: list[str]) -> dict:
 # Path B — Damodaran sector fallback
 # ---------------------------------------------------------------------------
 
-def damodaran_fallback(cache: dict, ticker: str) -> dict:
+def damodaran_fallback(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict:
     from backend.agent.cache import FinancialsCache, MarketDataCache
-    fin, _ = FinancialsCache.get_or_fetch(cache, ticker)
-    mkt, _ = MarketDataCache.get_or_fetch(cache, ticker)
+    fin, _ = FinancialsCache.get_or_fetch(conn, ticker)
+    mkt, _ = MarketDataCache.get_or_fetch(conn, ticker)
 
     sic: int | None = getattr(fin.metadata, "sic", None)
     if sic is None:

@@ -7,7 +7,8 @@ from langchain_core.tools import InjectedToolArg, tool
 from backend.services.scrape import search_and_scrape
 
 from ..cache import FinancialsCache, MarketDataCache, SectorDataCache
-from .base import log_cache_status, tool_cache
+from ..cache.session import open_connection
+from .base import log_cache_status
 
 
 @tool
@@ -15,7 +16,7 @@ def get_financials(
     ticker: str,
     span: int = 5,
     fiscal_years: list[int] = None,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
     Pull, normalize, and validate historical financials for a ticker.
@@ -30,9 +31,11 @@ def get_financials(
     Returns:
         {"source": "cache" | "external", "data": HistoricalFinancials payload}
     """
-    result, was_cached = FinancialsCache.get_or_fetch(
-        tool_cache(data_cache), ticker, int(span), fiscal_years
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = FinancialsCache.get_or_fetch(conn, ticker, int(span), fiscal_years)
+    finally:
+        conn.close()
     log_cache_status("get_financials", was_cached, ticker=ticker, span=span, fiscal_years=fiscal_years)
     return {
         "source": "cache" if was_cached else "external",
@@ -46,7 +49,7 @@ def get_financials(
 def get_market_data(
     ticker: str,
     include_rfr: bool = True,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
     Pull market data (price, beta, shares, market cap) and optional risk-free rate.
@@ -58,7 +61,11 @@ def get_market_data(
     Returns:
         {"source": "cache" | "external", "data": MarketData payload}
     """
-    result, was_cached = MarketDataCache.get_or_fetch(tool_cache(data_cache), ticker, include_rfr)
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = MarketDataCache.get_or_fetch(conn, ticker, include_rfr)
+    finally:
+        conn.close()
     log_cache_status("get_market_data", was_cached, ticker=ticker, include_rfr=include_rfr)
     return {
         "source": "cache" if was_cached else "external",
@@ -73,10 +80,14 @@ def get_market_data(
 @tool
 def get_sector_data(
     year: int,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Pull sector-level financial assumptions for a given year."""
-    result, was_cached = SectorDataCache.get_or_fetch(tool_cache(data_cache), year)
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = SectorDataCache.get_or_fetch(conn, year)
+    finally:
+        conn.close()
     log_cache_status("get_sector_data", was_cached, year=year)
     return {
         "source": "cache" if was_cached else "external",
@@ -90,7 +101,7 @@ def get_sector_data(
 def scrape_web(
     topic: str,
     max_results: int = 3,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
     Search the web for recent news, events, or public information on a financial topic.

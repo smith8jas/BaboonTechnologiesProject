@@ -2,84 +2,94 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+
+import duckdb
 
 from backend.services import comparables as comparables_service
 
 from .base import CacheHelpers
-from .schema import (
-    CACHE_CALCULATED,
-    CACHE_COMPARABLES,
-    DEPENDENCY_FINANCIALS,
-    DEPENDENCY_MARKET_DATA,
-)
+from .session import now
 
 
 class CompsCache:
-    CACHE_KEY = CACHE_COMPARABLES
-    BUCKET = CACHE_CALCULATED
 
     @staticmethod
     def get_or_calculate_peer(
-        cache: dict[str, Any],
+        conn: duckdb.DuckDBPyConnection,
         ticker: str,
         peers: list[str],
-    ) -> tuple[dict[str, Any], bool]:
-        company = CacheHelpers.company(cache, ticker)
-        comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
+    ) -> tuple[dict, bool]:
+        t = CacheHelpers.ticker(ticker)
         peer_key = ",".join(sorted(p.strip().upper() for p in peers))
-        cached = comps_cache.get("peer")
-        if cached and cached.get("peer_key") == peer_key:
-            return cached["payload"], True
 
-        payload = comparables_service.peer_comps(cache, ticker, peers)
-        comps_cache["peer"] = {
-            "payload": payload,
-            "peer_key": peer_key,
-            "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
-            "last_updated": CacheHelpers.now(),
-        }
+        conn.execute(
+            "SELECT peer_key, payload FROM comparables WHERE ticker = ? AND method = 'peer'",
+            [t],
+        )
+        row = conn.fetchone()
+        if row and row[0] == peer_key:
+            return json.loads(row[1]), True
+
+        payload = comparables_service.peer_comps(conn, t, peers)
+
+        conn.execute("""
+            INSERT OR REPLACE INTO comparables
+                (ticker, method, peer_key, payload, last_updated)
+            VALUES (?, 'peer', ?, ?, ?)
+        """, [t, peer_key, json.dumps(payload, default=str), now()])
+
         return payload, False
 
     @staticmethod
     def get_or_calculate_damodaran(
-        cache: dict[str, Any],
+        conn: duckdb.DuckDBPyConnection,
         ticker: str,
-    ) -> tuple[dict[str, Any], bool]:
-        company = CacheHelpers.company(cache, ticker)
-        comps_cache = company[CACHE_CALCULATED].setdefault(CACHE_COMPARABLES, {})
-        cached = comps_cache.get("damodaran")
-        if cached:
-            return cached["payload"], True
+    ) -> tuple[dict, bool]:
+        t = CacheHelpers.ticker(ticker)
 
-        payload = comparables_service.damodaran_fallback(cache, ticker)
-        comps_cache["damodaran"] = {
-            "payload": payload,
-            "depends_on": [DEPENDENCY_FINANCIALS, DEPENDENCY_MARKET_DATA],
-            "last_updated": CacheHelpers.now(),
-        }
+        conn.execute(
+            "SELECT payload FROM comparables WHERE ticker = ? AND method = 'damodaran'",
+            [t],
+        )
+        row = conn.fetchone()
+        if row:
+            return json.loads(row[0]), True
+
+        payload = comparables_service.damodaran_fallback(conn, t)
+
+        conn.execute("""
+            INSERT OR REPLACE INTO comparables
+                (ticker, method, peer_key, payload, last_updated)
+            VALUES (?, 'damodaran', NULL, ?, ?)
+        """, [t, json.dumps(payload, default=str), now()])
+
         return payload, False
 
     @staticmethod
-    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
-        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_COMPARABLES, {})
-        if not entry:
+    def catalog_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
+        t = CacheHelpers.ticker(ticker)
+        conn.execute(
+            "SELECT method FROM comparables WHERE ticker = ?",
+            [t],
+        )
+        rows = conn.fetchall()
+        if not rows:
             return None
-        result = {
-            key: {"available": True}
-            for key in ("peer", "damodaran")
-            if entry.get(key)
-        }
-        return result or None
+        return {r[0]: {"available": True} for r in rows}
 
     @staticmethod
-    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
-        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_COMPARABLES, {})
-        if not entry:
+    def payload_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
+        t = CacheHelpers.ticker(ticker)
+        conn.execute(
+            "SELECT method, payload FROM comparables WHERE ticker = ?",
+            [t],
+        )
+        rows = conn.fetchall()
+        if not rows:
             return None
-        result = {
-            key: data["payload"]
-            for key in ("peer", "damodaran")
-            if (data := entry.get(key)) and data.get("payload") is not None
+        return {
+            method: json.loads(payload_json)
+            for method, payload_json in rows
+            if payload_json is not None
         }
-        return result or None

@@ -57,15 +57,15 @@ def chatbot(agent):
                 )
             )
 
-        #print("  ")
-        #print("Agent response to user:  ")
-        #print(response)
-        #print("  ")
+        print("  ")
+        print("Agent response to user:  ")
+        print(response)
+        print("  ")
 
         if DEBUG_AGENT_STATE:
             print_agent_state(agent, thread_id)
 
-        #print("  ")
+        print("  ")
 
 #Prints agent state
 def print_agent_state(agent, thread_id):
@@ -93,7 +93,7 @@ if __name__ == "__main__":
 
     #Backend test starts here
 
-    logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
+    #logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
 
     #Function that sets up the nodes and edges of the agent
     agent = initialize_agent()

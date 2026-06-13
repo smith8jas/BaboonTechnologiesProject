@@ -7,14 +7,14 @@ entrypoints (activate_agent, activate_agent_async) in runtime.py.
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from .edges import route_after_plan, route_after_react, route_after_router
-from .nodes import plan_node, react_node, response_node, router, scrape_node, tools_node
+from .edges import route_after_judge, route_after_plan, route_after_react, route_after_router
+from .nodes import plan_node, react_node, response_node, router, scrape_node, tools_node, judge_node
 from .state import AgentState
 
 
 def initialize_agent():
     """Build and compile the state graph used by API and CLI entrypoints."""
-    
+
     #Setting the state class in the agent
     agent_builder = StateGraph(AgentState)
 
@@ -25,11 +25,12 @@ def initialize_agent():
     agent_builder.add_node("scrape_node", scrape_node)
     agent_builder.add_node("react_node", react_node)
     agent_builder.add_node("response_node", response_node)
-    
-    #Creating the graph edges that connect the different nodees
+    agent_builder.add_node("judge_node", judge_node)
+
+    #Creating the graph edges that connect the different nodes
     agent_builder.add_edge(START, "router")
     agent_builder.add_conditional_edges("router", route_after_router, {"plan_node": "plan_node", "end": END})
-    agent_builder.add_conditional_edges("plan_node", route_after_plan, 
+    agent_builder.add_conditional_edges("plan_node", route_after_plan,
         {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
     )
     agent_builder.add_edge("tools", "react_node")
@@ -39,7 +40,12 @@ def initialize_agent():
         route_after_react,
         {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
     )
-    agent_builder.add_edge("response_node", END)
+    agent_builder.add_edge("response_node", "judge_node")
+    agent_builder.add_conditional_edges(
+        "judge_node",
+        route_after_judge,
+        {"end": END, "revise": "react_node"},
+    )
 
     #Returning compiled graph agent with MemorySaver to remember previous messages of the same conversation
     return agent_builder.compile(checkpointer=MemorySaver())

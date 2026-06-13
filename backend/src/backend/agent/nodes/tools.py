@@ -1,91 +1,91 @@
-"""Tools node: executes planned tool calls and merges their cache updates."""
+"""Tools node: executes planned tool calls and writes their results to the DuckDB session."""
 
 import asyncio
 import json
 import logging
-from copy import deepcopy
 from typing import Any
 
 from langchain_core.messages import ToolMessage
 
-from ..cache import build_data_catalog, state_cache, tool_content
+from ..cache import build_data_catalog, tool_content
+from ..cache.session import open_connection
 from ..constants import SCRAPE_TOOL_NAME
 from ..messages import latest_tool_calls
-from ..state import AgentState, merge_cache
+from ..state import AgentState
 from ..tools import TOOLS_BY_NAME
 
 logger = logging.getLogger(__name__)
 
 
 async def tools_node(state: AgentState):
-    """Execute planned tool calls and merge their cache updates into state."""
+    """Execute planned tool calls and update the data catalog in state."""
     logger.info("Tools Node Activated")
 
     #Creates a list of the tool calls that do not involve scraping
+    #latest_tool_calls scans previous message for any tool_calls
     non_scrape_calls = [tc for tc in latest_tool_calls(state) if tc.get("name") != SCRAPE_TOOL_NAME]
 
     #Groups the tool calls by ticker
     grouped_calls = _group_calls_by_ticker(non_scrape_calls)
     logger.debug("Grouped calls: %s", grouped_calls)
 
-    #Obtains the current data cache (where financial data is stored in short memory) from state.
-    base_cache = state_cache(state)
+    #Session ID ties all tool writes to this conversation's DuckDB file
+    session_id = state.get("session_id") or ""
 
     #Sets an empty list to fill with ToolMessages
     messages: list[ToolMessage] = []
 
-    #Removes tool calls that do not belong to a ticker from grouped_calls
+    #global_calls are tool calls that do not require a ticker
     global_calls = grouped_calls.pop(None, [])
     logger.debug("Global calls: %s", global_calls)
 
     # Global (no-ticker) calls run first — their results may feed into ticker-scoped calls.
     if global_calls:
-        global_result = await _run_ticker_group(global_calls, base_cache)
-        messages.extend(global_result["messages"])
-        base_cache = global_result["data_cache"]
+        messages.extend(await _run_ticker_group(global_calls, session_id))
 
-    # All per-ticker groups run concurrently, each starting from the same base_cache snapshot.
+    # All per-ticker groups run concurrently; DuckDB serialises concurrent file writes.
     group_results = await asyncio.gather(
-        *[_run_ticker_group(calls, base_cache) for calls in grouped_calls.values()]
+        *[_run_ticker_group(calls, session_id) for calls in grouped_calls.values()]
     )
+    for group_messages in group_results:
+        messages.extend(group_messages)
 
-    merged_cache = base_cache
-    for result in group_results:
-        messages.extend(result["messages"])
-        merged_cache = merge_cache(merged_cache, result["data_cache"])
+    # Build catalog from DuckDB now that all tools have written their data.
+    conn = open_connection(session_id)
+    try:
+        catalog = build_data_catalog(conn)
+    finally:
+        conn.close()
 
     return {
         "messages": messages,
-        "data_cache": merged_cache,
-        "data_catalog": build_data_catalog(merged_cache),
+        "data_catalog": catalog,
     }
 
 
 async def _run_ticker_group(
     calls: list[dict[str, Any]],
-    data_cache: dict[str, Any],
-) -> dict[str, Any]:
-    """Run all calls for one ticker concurrently, then fold their cache deltas together."""
+    session_id: str,
+) -> list[ToolMessage]:
+    """Run all calls for one ticker sequentially to avoid DuckDB write-write conflicts.
 
-    #Runs the tools asynchronically
-    #results is a tuple with the ToolMessage and the updated cache for each tool call
-    results = await asyncio.gather(*[_execute_tool_call(call, data_cache) for call in calls])
-
-    messages = [msg for msg, _ in results]
-
-    # Start from a clean copy so the returned dict is always self-contained.
-    merged_cache = deepcopy(data_cache)
-    for _, call_cache in results:
-        merged_cache = merge_cache(merged_cache, call_cache)
-
-    return {"messages": messages, "data_cache": merged_cache}
+    Calls within the same ticker share primary-key rows in DuckDB (e.g. financials).
+    DuckDB's serializable MVCC rejects concurrent writes to the same key even with
+    INSERT OR REPLACE, so we serialize within a ticker while still running different
+    ticker groups concurrently in the outer asyncio.gather.
+    """
+    #Empty list of messages for 1 ticker that is filled in sequentially by ticker
+    messages = []
+    for call in calls:
+        messages.append(await _execute_tool_call(call, session_id))
+    return messages
 
 
 async def _execute_tool_call(
     call: dict[str, Any],
-    data_cache: dict[str, Any],
-) -> tuple[ToolMessage, dict[str, Any]]:
-    """Invoke one tool call and return its ToolMessage paired with the updated cache snapshot."""
+    session_id: str,
+) -> ToolMessage:
+    """Invoke one tool call and return its ToolMessage."""
 
     #Defines arguments (Ticker and Period), tool_call_id and tool by name to call
     name = call.get("name")
@@ -96,22 +96,17 @@ async def _execute_tool_call(
     #If the tool does not exist it throws an error and returns a ToolMessage with that error
     if tool is None:
         content = json.dumps({"error": f"Unknown tool: {name}", "available_tools": sorted(TOOLS_BY_NAME)})
-        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id), deepcopy(data_cache)
+        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id)
 
-    #Another copy of the cache in State to replace with new values
-    # Each call gets its own deep copy so concurrent siblings don't share mutable state.
-    cache = deepcopy(data_cache)
-
-    #Invokes the tools asynchronically with defined arguments and the cache copy
+    #Invokes the tool in a thread so it does not block the event loop; each tool manages its own DuckDB connection
     try:
-        result = await asyncio.to_thread(tool.invoke, {**args, "data_cache": cache})
+        result = await asyncio.to_thread(tool.invoke, {**args, "session_id": session_id})
         content = tool_content(result)
-        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id), cache
+        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id)
     #Returns an error if a tool call fails
     except Exception as exc:
         content = f"Tool execution failed for {name}: {exc}"
-        # Return a clean snapshot — cache may be partially mutated if the tool raised mid-write.
-        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id), deepcopy(data_cache)
+        return ToolMessage(content=content, name=name, tool_call_id=tool_call_id)
 
 
 def _group_calls_by_ticker(

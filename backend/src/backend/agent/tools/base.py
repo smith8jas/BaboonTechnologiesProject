@@ -1,12 +1,10 @@
-"""Shared plumbing for agent tools: spec metadata, cache injection, logging."""
+"""Shared plumbing for agent tools: spec metadata and logging."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from typing import Any
-
-from ..cache import empty_data_cache
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +39,6 @@ def apply_tool_spec(spec: ToolSpec):
     metadata["agent"] = spec.metadata
     spec.tool.metadata = metadata
     return spec.tool
-
-
-def tool_cache(data_cache: dict | None) -> dict:
-    return data_cache if data_cache is not None else empty_data_cache()
 
 
 def log_cache_status(tool_name: str, was_cached: bool, **kwargs) -> None:

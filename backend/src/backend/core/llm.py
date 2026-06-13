@@ -13,6 +13,7 @@ load_dotenv(env_path)
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER")
 LLM_MODEL = os.getenv("LLM_MODEL")
+LLM_MAX_TOKENS = os.getenv("LLM_MAX_TOKENS")
 
 # Builds the configured chat model.
 def build_chat_model():
@@ -22,11 +23,11 @@ def build_chat_model():
     if not LLM_MODEL:
         raise RuntimeError("LLM_MODEL is not set in backend/Orchestration/.env.")
 
-    return init_chat_model(
-        model=LLM_MODEL,
-        model_provider=LLM_PROVIDER,
-        temperature=0,
-    )
+    kwargs = {"model": LLM_MODEL, "model_provider": LLM_PROVIDER, "temperature": 0}
+    if LLM_MAX_TOKENS:
+        kwargs["max_tokens"] = int(LLM_MAX_TOKENS)
+
+    return init_chat_model(**kwargs)
 
 CHAT_MODEL = build_chat_model()
 

@@ -2,26 +2,19 @@
 
 Layout:
     schema.py       cache key constants and dependency labels
-    base.py         empty skeletons, CacheHelpers, serialization helpers
-    financials.py   FinancialsCache      (searched bucket)
-    market_data.py  MarketDataCache      (searched bucket)
-    sector_data.py  SectorDataCache      (global bucket)
-    growth.py       GrowthCache          (calculated bucket)
-    ratios.py       RatiosCache          (calculated bucket)
-    dcf.py          DCFCache             (calculated bucket)
-    comparables.py  CompsCache           (calculated bucket)
-    catalog.py      registry + catalog/payload builders for prompts
+    base.py         CacheHelpers, serialization helpers
+    session.py      DuckDB session lifecycle (create / open / close)
+    financials.py   FinancialsCache      (financials + companies tables)
+    market_data.py  MarketDataCache      (market_data table)
+    sector_data.py  SectorDataCache      (sector_data table)
+    growth.py       GrowthCache          (growth_rates table)
+    ratios.py       RatiosCache          (ratios table)
+    dcf.py          DCFCache             (dcf table)
+    comparables.py  CompsCache           (comparables table)
+    catalog.py      catalog/payload builders for prompts
 """
 
-from .base import (
-    CacheHelpers,
-    empty_data_cache,
-    empty_data_catalog,
-    financials_coverage,
-    fiscal_year_key,
-    state_cache,
-    tool_content,
-)
+from .base import CacheHelpers, tool_content
 from .catalog import COMPANY_TOOL_CACHES, build_data_catalog, build_data_payload
 from .comparables import CompsCache
 from .dcf import DCFCache
@@ -43,10 +36,5 @@ __all__ = [
     "SectorDataCache",
     "build_data_catalog",
     "build_data_payload",
-    "empty_data_cache",
-    "empty_data_catalog",
-    "financials_coverage",
-    "fiscal_year_key",
-    "state_cache",
     "tool_content",
 ]

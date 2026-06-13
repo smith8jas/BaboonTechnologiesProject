@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from .cache.session import create_session
 from .constants import DEFAULT_RECURSION_LIMIT
 from .prompts import app_context
 from .tools import AVAILABLE_TOOLS
@@ -29,15 +30,18 @@ async def activate_agent_async(
     #Function that injects the config and previous_state into the langraph state to allow for memory during the conversation
     set_turn_start_step(config, previous_state)
 
+    #Creates (or reuses) the DuckDB session for this conversation
+    create_session(thread_id)
+
     #Prints the internal agent process if debug_updates is set to True. Else it just returns the final state with invoke
-    #initial_state uses the new user input and gets the context prompt, current year, available tools, 
+    #initial_state uses the new user input and gets the context prompt, current year, available tools,
     # and resets forced_response due recursion to false to inject all of them in Agent State
     if debug_updates:
-        async for update in agent.astream(initial_state(user_input), config=config, stream_mode="updates"):
-            #print(update)
+        async for update in agent.astream(initial_state(user_input, thread_id), config=config, stream_mode="updates"):
+            print(update)
             result = (await agent.aget_state(config)).values
     else:
-        result = await agent.ainvoke(initial_state(user_input), config=config)
+        result = await agent.ainvoke(initial_state(user_input, thread_id), config=config)
     
     #The last message of messages in the state is the LLM's response to the user
     return result["messages"][-1].content
@@ -58,7 +62,7 @@ def set_turn_start_step(config: dict[str, Any], state_snapshot) -> None:
     config.setdefault("configurable", {})["turn_start_step"] = turn_start_step
 
 
-def initial_state(user_input):
+def initial_state(user_input, session_id: str):
     """Creates a dictionary of some values to set in the agent state, including the user's input,
     The context prompt, the current year, the tools it has available and resets the value
     forced_response_due_to_recursion to False"""
@@ -68,6 +72,11 @@ def initial_state(user_input):
         "current_year": date.today().year,
         "available_tools": AVAILABLE_TOOLS,
         "forced_response_due_to_recursion": False,
+        "session_id": session_id,
+        "react_iterations": 0,
+        "judge_iterations": 0,
+        "judge_react_extensions": 0,
+        "judge_verdict": "",
     }
 
 
