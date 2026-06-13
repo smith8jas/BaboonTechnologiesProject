@@ -5,14 +5,12 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
-from backend.core.llm import CHAT_MODEL
+from backend.core.llm import NODE_PROVIDERS, get_node_model
 
 from .messages import messages_for_llm
 from .prompts import data_dictionary
 from .state import AgentState
 from .tools import tools
-
-CHAT_MODEL_WITH_TOOLS = CHAT_MODEL.bind_tools(tools)
 
 # Fields each node receives in runtime_context beyond current_year (always included).
 # All "who sees what" policy lives here — nodes just pass their name to invoke_llm*.
@@ -22,6 +20,7 @@ _NODE_CONTEXT: dict[str, set[str]] = {
     "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale"},
     "response": {"cached_data_catalog", "scrape_history", "forced_response_due_to_recursion"},
     "judge":    set(),
+    "scrape":   {"scrape_history"},
 }
 
 
@@ -31,10 +30,14 @@ async def invoke_llm(
     node: str,
     use_tools: bool = False,
     data_payload: dict | None = None,
+    messages: list | None = None,
 ) -> AIMessage:
     system_blocks = build_system_prompt(state, prompt, node, data_payload=data_payload)
-    model = CHAT_MODEL_WITH_TOOLS if use_tools else CHAT_MODEL
-    return await model.ainvoke([SystemMessage(content=system_blocks)] + messages_for_llm(state))
+    model = get_node_model(node)
+    if use_tools:
+        model = model.bind_tools(tools)
+    msgs = messages if messages is not None else messages_for_llm(state)
+    return await model.ainvoke([SystemMessage(content=system_blocks)] + msgs)
 
 
 async def invoke_llm_structured(
@@ -42,10 +45,12 @@ async def invoke_llm_structured(
     prompt: str,
     schema: type,
     node: str,
+    messages: list | None = None,
 ) -> Any:
     system_blocks = build_system_prompt(state, prompt, node)
-    model = CHAT_MODEL.with_structured_output(schema, method="function_calling")
-    return await model.ainvoke([SystemMessage(content=system_blocks)] + messages_for_llm(state))
+    model = get_node_model(node).with_structured_output(schema, method="function_calling")
+    msgs = messages if messages is not None else messages_for_llm(state)
+    return await model.ainvoke([SystemMessage(content=system_blocks)] + msgs)
 
 
 def build_system_prompt(
@@ -54,12 +59,7 @@ def build_system_prompt(
     node: str,
     data_payload: dict | None = None,
 ) -> list[dict]:
-    """Return system prompt as content blocks with cache_control on the stable prefix.
-
-    The stable block (app_context + data_dictionary + node_prompt) is identical
-    across all iterations of the same node type, so Anthropic caches it and serves
-    subsequent calls at ~10% of normal input-token cost. The volatile block
-    (runtime context) always changes and is never marked for caching.
+    """Return system prompt as content blocks, with Anthropic cache_control on the stable block.
 
     node: key into _NODE_CONTEXT — all policy on who sees what lives there.
     """
@@ -93,7 +93,8 @@ def build_system_prompt(
     )
     volatile = f"\n\n    Runtime context:\n    {json.dumps(context, indent=2, default=str)}\n    "
 
-    return [
-        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": volatile},
-    ]
+    stable_block: dict = {"type": "text", "text": stable}
+    if NODE_PROVIDERS.get(node) == "anthropic":
+        stable_block["cache_control"] = {"type": "ephemeral"}
+
+    return [stable_block, {"type": "text", "text": volatile}]

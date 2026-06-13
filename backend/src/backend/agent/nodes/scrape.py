@@ -7,7 +7,7 @@ import logging
 from langchain_core.messages import SystemMessage, ToolMessage
 from pydantic import BaseModel
 
-from backend.core.llm import CHAT_MODEL
+from backend.core.llm import NODE_PROVIDERS, get_node_model
 from backend.services.scrape import search_and_scrape_async
 
 from ..constants import SCRAPE_LIMIT, SCRAPE_MIN_CONFIDENCE, SCRAPE_TOOL_NAME
@@ -137,12 +137,13 @@ async def _invoke_scrape_decision(state: AgentState, topic: str) -> ScrapeDecisi
             "latest_user_message": latest_human_message_content(state),
             "current_year": state.get("current_year"),
             "topic": topic,
+            "scrape_history": state.get("scrape_history", [])[-20:],
         },
         indent=2,
     )
-    system_blocks = [
-        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": volatile},
-    ]
-    model = CHAT_MODEL.with_structured_output(ScrapeDecision)
+    stable_block: dict = {"type": "text", "text": stable}
+    if NODE_PROVIDERS.get("scrape") == "anthropic":
+        stable_block["cache_control"] = {"type": "ephemeral"}
+    system_blocks = [stable_block, {"type": "text", "text": volatile}]
+    model = get_node_model("scrape").with_structured_output(ScrapeDecision)
     return await model.ainvoke([SystemMessage(content=system_blocks)])

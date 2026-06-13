@@ -26,10 +26,12 @@ async def react_node(state: AgentState):
     """Evaluate tool results and decide whether more tools are needed or data is sufficient."""
     logger.info("React Node Activated")
     
-    #Defines system prompt; append judge context after a judge pass so react sees the critique
+    #Defines system prompt; append judge context and prior response after a judge revision
     local_prompt = deep_react_prompt if state.get("deep_plan") else react_prompt
-    if state.get("judge_iterations", 0) > 0:
+    if state.get("judge_verdict") == "revise":
         local_prompt = local_prompt + judge_react_addendum
+        if cr := state.get("current_response"):
+            local_prompt += f"\n\nCurrent response being revised (use this to understand what data gaps to address):\n{cr}"
     
     #Gets react counter from State Class
     react_count = state.get("react_iterations", 0)

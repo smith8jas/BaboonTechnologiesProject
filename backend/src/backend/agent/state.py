@@ -25,3 +25,5 @@ class AgentState(TypedDict):
     tool_guidance: NotRequired[str] #Justification for tool use written by plan node and then red by response node
     deep_plan: NotRequired[bool] #Whether the router selected the deep-analysis path for the current request; persists across turns so the next router reads it as previous_depth
     judge_rationale: NotRequired[str] #Critique written by judge_node explaining why it chose its verdict
+    current_response: NotRequired[str] #Latest response_node output; overwritten on every response_node call
+    current_response: NotRequired[str] #Latest response_node output; overwritten on every response_node call
