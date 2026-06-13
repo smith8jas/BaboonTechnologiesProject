@@ -6,9 +6,10 @@
     scrape.py    expands scrape topics into queries and gathers web results
     react.py     evaluates tool results and loops or finishes
     response.py  composes the final user-facing answer
-    depth.py     shared deep-plan flag set by the router
+    judge.py     evaluates the response and decides whether to revise or release
 """
 
+from .judge import judge_node
 from .plan import plan_node
 from .react import react_node
 from .response import response_node
@@ -19,6 +20,7 @@ from .tools import tools_node
 __all__ = [
     "RouterDecision",
     "ScrapeDecision",
+    "judge_node",
     "plan_node",
     "react_node",
     "response_node",

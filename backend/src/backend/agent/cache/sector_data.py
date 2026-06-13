@@ -3,43 +3,61 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+
+import duckdb
 
 from backend.processing.schema import SectorData
 from backend.services import financials as financials_service
 
-from .base import CacheHelpers
-from .schema import CACHE_GLOBAL, CACHE_SECTOR_DATA_BY_YEAR
+from .session import now
 
 
 class SectorDataCache:
+
     @staticmethod
     def get_or_fetch(
-        cache: dict[str, Any],
+        conn: duckdb.DuckDBPyConnection,
         year: int | None,
     ) -> tuple[SectorData, bool]:
-        resolved_year = str(year or date.today().year)
-        cached = cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR].get(resolved_year)
-        if cached:
-            return SectorData.model_validate(cached["payload"]), True
-        sd = financials_service.get_sector_data(int(resolved_year))
-        cache[CACHE_GLOBAL][CACHE_SECTOR_DATA_BY_YEAR][resolved_year] = {
-            "payload_type": "SectorData",
-            "payload": CacheHelpers.dump_model(sd),
-            "last_updated": CacheHelpers.now(),
-        }
+        resolved = int(year or date.today().year)
+        conn.execute(
+            "SELECT equity_risk_premium, long_term_growth_rate FROM sector_data WHERE year = ?",
+            [resolved],
+        )
+        row = conn.fetchone()
+        if row:
+            return SectorData.model_validate({
+                "equity_risk_premium": row[0],
+                "long_term_growth_rate": row[1],
+            }), True
+
+        sd = financials_service.get_sector_data(resolved)
+        SectorDataCache._store(conn, resolved, sd)
         return sd, False
 
     @staticmethod
-    def catalog_entry(global_cache: dict[str, Any]) -> list[str]:
-        return sorted((global_cache.get(CACHE_SECTOR_DATA_BY_YEAR) or {}).keys())
+    def _store(conn: duckdb.DuckDBPyConnection, year: int, sd: SectorData) -> None:
+        conn.execute("""
+            INSERT OR REPLACE INTO sector_data
+                (year, equity_risk_premium, long_term_growth_rate, last_updated)
+            VALUES (?, ?, ?, ?)
+        """, [year, sd.equity_risk_premium, sd.long_term_growth_rate, now()])
 
     @staticmethod
-    def payload_entry(global_cache: dict[str, Any]) -> dict | None:
-        sector_by_year = (global_cache or {}).get(CACHE_SECTOR_DATA_BY_YEAR) or {}
-        data = {
-            year: d["payload"]
-            for year, d in sector_by_year.items()
-            if d.get("payload") is not None
+    def catalog_entry(conn: duckdb.DuckDBPyConnection) -> list[int]:
+        """Return sorted list of years for which sector data is cached."""
+        conn.execute("SELECT year FROM sector_data ORDER BY year")
+        return [row[0] for row in conn.fetchall()]
+
+    @staticmethod
+    def payload_entry(conn: duckdb.DuckDBPyConnection) -> dict | None:
+        conn.execute(
+            "SELECT year, equity_risk_premium, long_term_growth_rate FROM sector_data ORDER BY year"
+        )
+        rows = conn.fetchall()
+        if not rows:
+            return None
+        return {
+            str(r[0]): {"equity_risk_premium": r[1], "long_term_growth_rate": r[2]}
+            for r in rows
         }
-        return data or None

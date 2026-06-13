@@ -2,110 +2,93 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+
+import duckdb
 
 from backend.services import dcf_engine
 
 from .base import CacheHelpers
 from .financials import FinancialsCache
 from .market_data import MarketDataCache
-from .schema import (
-    CACHE_CALCULATED,
-    CACHE_DCF,
-    CACHE_FINANCIALS,
-    CACHE_SCENARIOS,
-    DEPENDENCY_FINANCIALS,
-    DEPENDENCY_MARKET_DATA,
-    DEPENDENCY_SECTOR_DATA,
-    SCENARIO_DEFAULT,
-)
 from .sector_data import SectorDataCache
+from .session import now
+
+SCENARIO_DEFAULT = "default"
 
 
 class DCFCache:
-    CACHE_KEY = CACHE_DCF
-    BUCKET = CACHE_CALCULATED
 
     @staticmethod
     def get_or_calculate(
-        cache: dict[str, Any],
+        conn: duckdb.DuckDBPyConnection,
         ticker: str,
         span: int,
         year: int,
-    ) -> tuple[dict[str, Any], bool]:
-        company = CacheHelpers.company(cache, ticker)
-        dcf_cache = company[CACHE_CALCULATED].setdefault(CACHE_DCF, {CACHE_SCENARIOS: {}})
-        cached = dcf_cache.setdefault(CACHE_SCENARIOS, {}).get(SCENARIO_DEFAULT)
-        if (
-            cached
-            and CacheHelpers.coverage_satisfies(
-                cached.get("source_fingerprint", {}).get(CACHE_FINANCIALS, {}), span
-            )
-            and cached.get("coverage", {}).get("sector_year") == int(year)
-        ):
-            return cached["payload"], True
+    ) -> tuple[dict, bool]:
+        t = CacheHelpers.ticker(ticker)
 
-        hf, _ = FinancialsCache.get_or_fetch(cache, ticker, span)
-        md, _ = MarketDataCache.get_or_fetch(cache, ticker, True)
-        sd, _ = SectorDataCache.get_or_fetch(cache, year)
+        conn.execute(
+            "SELECT span, sector_year, payload FROM dcf WHERE ticker = ? AND scenario = ?",
+            [t, SCENARIO_DEFAULT],
+        )
+        row = conn.fetchone()
+        if row and int(row[0] or 0) >= span and int(row[1] or 0) == int(year):
+            return json.loads(row[2]), True
+
+        hf, _ = FinancialsCache.get_or_fetch(conn, t, span)
+        md, _ = MarketDataCache.get_or_fetch(conn, t, include_rfr=True)
+        sd, _ = SectorDataCache.get_or_fetch(conn, year)
+
         assumptions = dcf_engine.build_assumptions(hf, md, sd)
         valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
         result = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
-        payload = CacheHelpers.dump_model(result)
-        dcf_cache[CACHE_SCENARIOS][SCENARIO_DEFAULT] = {
-            "payload_type": "DCFOutput",
-            "payload": payload,
-            "coverage": {
-                "base_fiscal_year": result.fiscal_year,
-                "projection_years": result.projection_years,
-                "sector_year": int(year),
-            },
-            "depends_on": [
-                DEPENDENCY_FINANCIALS,
-                DEPENDENCY_MARKET_DATA,
-                f"{DEPENDENCY_SECTOR_DATA}.{year}",
-            ],
-            "source_fingerprint": {
-                CACHE_FINANCIALS: FinancialsCache.coverage(hf, span),
-                "sector_year": int(year),
-            },
-            "last_updated": CacheHelpers.now(),
-        }
+        payload = result.model_dump(mode="json")
+
+        conn.execute("""
+            INSERT OR REPLACE INTO dcf
+                (ticker, scenario, fiscal_year, sector_year, span, payload, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [
+            t, SCENARIO_DEFAULT, result.fiscal_year, int(year), span,
+            json.dumps(payload), now(),
+        ])
+
         return payload, False
 
     @staticmethod
-    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
-        dcf_entry = (
-            company_cache.get(CACHE_CALCULATED, {})
-            .get(CACHE_DCF, {})
-            .get(CACHE_SCENARIOS, {})
+    def catalog_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
+        t = CacheHelpers.ticker(ticker)
+        conn.execute(
+            "SELECT scenario, fiscal_year, payload FROM dcf WHERE ticker = ?",
+            [t],
         )
-        if not dcf_entry:
+        rows = conn.fetchall()
+        if not rows:
             return None
-        return {
-            scenario: {
+        result = {}
+        for scenario, fiscal_year, payload_json in rows:
+            payload = json.loads(payload_json) if payload_json else {}
+            result[scenario] = {
                 "available": True,
-                "base_fiscal_year": data.get("coverage", {}).get("base_fiscal_year"),
-                "projection_years": data.get("coverage", {}).get("projection_years", []),
-                "intrinsic_value_per_share": (
-                    data.get("payload", {}) or {}
-                ).get("intrinsic_value_per_share"),
+                "base_fiscal_year": fiscal_year,
+                "projection_years": payload.get("projection_years", []),
+                "intrinsic_value_per_share": payload.get("intrinsic_value_per_share"),
             }
-            for scenario, data in dcf_entry.items()
-        }
+        return result
 
     @staticmethod
-    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
-        dcf_scenarios = (
-            company_cache.get(CACHE_CALCULATED, {})
-            .get(CACHE_DCF, {})
-            .get(CACHE_SCENARIOS, {})
+    def payload_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
+        t = CacheHelpers.ticker(ticker)
+        conn.execute(
+            "SELECT scenario, payload FROM dcf WHERE ticker = ?",
+            [t],
         )
-        if not dcf_scenarios:
+        rows = conn.fetchall()
+        if not rows:
             return None
-        result = {
-            scenario: data["payload"]
-            for scenario, data in dcf_scenarios.items()
-            if data.get("payload") is not None
+        return {
+            scenario: json.loads(payload_json)
+            for scenario, payload_json in rows
+            if payload_json is not None
         }
-        return result or None

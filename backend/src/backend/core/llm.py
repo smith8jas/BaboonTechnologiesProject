@@ -1,40 +1,51 @@
 import os
 
-from dotenv import load_dotenv, find_dotenv
+from dotenv import find_dotenv, load_dotenv
 from langchain.chat_models import init_chat_model
 
 load_dotenv(find_dotenv())
 
-env_path = find_dotenv()
+LLM_MAX_TOKENS = os.getenv("LLM_MAX_TOKENS")
 
-load_dotenv(env_path)
+_NODE_DEFAULTS: dict[str, tuple[str, str]] = {
+    "router":   ("anthropic", "claude-haiku-4-5-20251001"),
+    "plan":     ("openai",    "gpt-4.1"),
+    "react":    ("openai",    "gpt-4.1"),
+    "response": ("anthropic", "claude-haiku-4-5-20251001"),
+    "judge":    ("openai",    "gpt-4o-mini"),
+    "scrape":   ("groq",      "llama-3.3-70b-versatile"),
+}
 
-#Loads environment to configure the chatbot LLM.
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER")
-LLM_MODEL = os.getenv("LLM_MODEL")
+def _build_model(provider: str, model: str):
+    kwargs: dict = {"model": model, "model_provider": provider, "temperature": 0}
+    if LLM_MAX_TOKENS:
+        kwargs["max_tokens"] = int(LLM_MAX_TOKENS)
+    return init_chat_model(**kwargs)
 
-# Builds the configured chat model.
-def build_chat_model():
-    if not LLM_PROVIDER:
-        raise RuntimeError("LLM_PROVIDER is not set in backend/Orchestration/.env.")
 
-    if not LLM_MODEL:
-        raise RuntimeError("LLM_MODEL is not set in backend/Orchestration/.env.")
+NODE_PROVIDERS: dict[str, str] = {
+    node: os.getenv(f"{node.upper()}_LLM_PROVIDER", default_provider)
+    for node, (default_provider, _) in _NODE_DEFAULTS.items()
+}
 
-    return init_chat_model(
-        model=LLM_MODEL,
-        model_provider=LLM_PROVIDER,
-        temperature=0,
+NODE_MODELS = {
+    node: _build_model(
+        NODE_PROVIDERS[node],
+        os.getenv(f"{node.upper()}_LLM_MODEL", default_model),
     )
+    for node, (_, default_model) in _NODE_DEFAULTS.items()
+}
 
-CHAT_MODEL = build_chat_model()
 
-# Function to ask an LLM a question.
+def get_node_model(node: str):
+    return NODE_MODELS[node]
+
+
 def ask_llm(instruction, **inputs):
     prompt_parts = [instruction]
     for key, value in inputs.items():
         prompt_parts.append(f"{key}: {value}")
     prompt = "\n\n".join(prompt_parts)
-    response = CHAT_MODEL.invoke(prompt)
+    response = NODE_MODELS["response"].invoke(prompt)
     return response.content if hasattr(response, "content") else str(response)

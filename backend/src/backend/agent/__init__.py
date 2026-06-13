@@ -3,7 +3,7 @@
 Package layout:
     graph.py      composes nodes and edges into the compiled agent
     runtime.py    activate_agent / activate_agent_async entrypoints
-    state.py      AgentState schema and the data_cache merge reducer
+    state.py      AgentState schema
     constants.py  recursion and scrape limits shared across the graph
     llm.py        shared LLM invocation with prompt caching
     messages.py   message-history filtering helpers

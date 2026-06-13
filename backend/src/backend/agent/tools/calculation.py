@@ -14,22 +14,22 @@ from ..cache.schema import (
     SUBDOMAIN_PROFITABILITY,
     SUBDOMAIN_SOLVENCY,
 )
-from .base import log_cache_status, tool_cache
+from ..cache.session import open_connection
+from .base import log_cache_status
 
 
 @tool
 def get_income_statement_growth_rates(
     ticker: str,
     span: int = 5,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Calculate year-over-year income statement growth rates across the latest span fiscal periods."""
-    result, was_cached = GrowthCache.get_or_calculate(
-        tool_cache(data_cache),
-        ticker,
-        int(span),
-        SUBDOMAIN_INCOME_STATEMENT,
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_INCOME_STATEMENT)
+    finally:
+        conn.close()
     log_cache_status("get_income_statement_growth_rates", was_cached, ticker=ticker, span=span)
     return {"source": "cache" if was_cached else "external", "data": result}
 
@@ -38,15 +38,14 @@ def get_income_statement_growth_rates(
 def get_balance_sheet_growth_rates(
     ticker: str,
     span: int = 5,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Calculate year-over-year balance sheet growth rates across the latest span fiscal periods."""
-    result, was_cached = GrowthCache.get_or_calculate(
-        tool_cache(data_cache),
-        ticker,
-        int(span),
-        SUBDOMAIN_BALANCE_SHEET,
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_BALANCE_SHEET)
+    finally:
+        conn.close()
     log_cache_status("get_balance_sheet_growth_rates", was_cached, ticker=ticker, span=span)
     return {"source": "cache" if was_cached else "external", "data": result}
 
@@ -55,15 +54,14 @@ def get_balance_sheet_growth_rates(
 def get_liquidity_ratios(
     ticker: str,
     span: int = 5,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Calculate liquidity ratios across the latest span fiscal periods."""
-    result, was_cached = RatiosCache.get_or_calculate(
-        tool_cache(data_cache),
-        ticker,
-        int(span),
-        SUBDOMAIN_LIQUIDITY,
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_LIQUIDITY)
+    finally:
+        conn.close()
     log_cache_status("get_liquidity_ratios", was_cached, ticker=ticker, span=span)
     return {"source": "cache" if was_cached else "external", "data": result}
 
@@ -72,15 +70,14 @@ def get_liquidity_ratios(
 def get_solvency_ratios(
     ticker: str,
     span: int = 5,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Calculate solvency ratios across the latest span fiscal periods."""
-    result, was_cached = RatiosCache.get_or_calculate(
-        tool_cache(data_cache),
-        ticker,
-        int(span),
-        SUBDOMAIN_SOLVENCY,
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_SOLVENCY)
+    finally:
+        conn.close()
     log_cache_status("get_solvency_ratios", was_cached, ticker=ticker, span=span)
     return {"source": "cache" if was_cached else "external", "data": result}
 
@@ -89,15 +86,14 @@ def get_solvency_ratios(
 def get_profitability_ratios(
     ticker: str,
     span: int = 5,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Calculate profitability ratios across the latest span fiscal periods."""
-    result, was_cached = RatiosCache.get_or_calculate(
-        tool_cache(data_cache),
-        ticker,
-        int(span),
-        SUBDOMAIN_PROFITABILITY,
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_PROFITABILITY)
+    finally:
+        conn.close()
     log_cache_status("get_profitability_ratios", was_cached, ticker=ticker, span=span)
     return {"source": "cache" if was_cached else "external", "data": result}
 
@@ -106,15 +102,14 @@ def get_profitability_ratios(
 def get_efficiency_ratios(
     ticker: str,
     span: int = 5,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Calculate working capital efficiency ratios across the latest span fiscal periods."""
-    result, was_cached = RatiosCache.get_or_calculate(
-        tool_cache(data_cache),
-        ticker,
-        int(span),
-        SUBDOMAIN_EFFICIENCY,
-    )
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_EFFICIENCY)
+    finally:
+        conn.close()
     log_cache_status("get_efficiency_ratios", was_cached, ticker=ticker, span=span)
     return {"source": "cache" if was_cached else "external", "data": result}
 
@@ -124,11 +119,15 @@ def run_dcf_valuation(
     ticker: str,
     span: int = 5,
     year: int = 0,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """Run a full DCF valuation for a public company ticker."""
     year = year or date.today().year
-    result, was_cached = DCFCache.get_or_calculate(tool_cache(data_cache), ticker, int(span), int(year))
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = DCFCache.get_or_calculate(conn, ticker, int(span), int(year))
+    finally:
+        conn.close()
     log_cache_status("run_dcf_valuation", was_cached, ticker=ticker, span=span, year=year)
     return {
         "source": "cache" if was_cached else "external",
@@ -145,7 +144,7 @@ def run_dcf_valuation(
 def get_comps_valuation(
     ticker: str,
     peers: Optional[list[str]] = None,
-    data_cache: Annotated[dict, InjectedToolArg] = None,
+    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
     Comparable company valuation for a given ticker.
@@ -162,10 +161,13 @@ def get_comps_valuation(
         ticker: Target company ticker (e.g. "AAPL").
         peers:  Optional list of peer tickers (e.g. ["MSFT", "GOOGL"]).
     """
-    cache = tool_cache(data_cache)
-    if peers:
-        result, was_cached = CompsCache.get_or_calculate_peer(cache, ticker, peers)
-    else:
-        result, was_cached = CompsCache.get_or_calculate_damodaran(cache, ticker)
+    conn = open_connection(session_id)
+    try:
+        if peers:
+            result, was_cached = CompsCache.get_or_calculate_peer(conn, ticker, peers)
+        else:
+            result, was_cached = CompsCache.get_or_calculate_damodaran(conn, ticker)
+    finally:
+        conn.close()
     log_cache_status("get_comps_valuation", was_cached, ticker=ticker)
     return result

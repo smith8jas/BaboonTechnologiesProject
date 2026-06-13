@@ -446,6 +446,16 @@ export default function App() {
             ),
           );
         },
+        onClear: () => {
+          streamedContent = '';
+          updateMessages(sessionId, (current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, content: '', statusText: '' }
+                : message,
+            ),
+          );
+        },
         onDelta: (chunk) => {
           streamedContent += chunk;
           updateMessages(sessionId, (current) =>

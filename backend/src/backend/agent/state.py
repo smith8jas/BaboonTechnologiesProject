@@ -1,40 +1,29 @@
-"""Agent graph state schema and the data_cache merge reducer."""
+"""Agent graph state schema."""
 
 import operator
-from copy import deepcopy
 from typing import Any
 
 from langchain.messages import AnyMessage
 from typing_extensions import Annotated, NotRequired, TypedDict
 
-
-def merge_cache(left: dict | None, right: dict | None) -> dict:
-    if not left:
-        return deepcopy(right or {})
-    if not right:
-        return deepcopy(left)
-
-    result = deepcopy(left)
-    for key, value in right.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = merge_cache(result[key], value)
-        else:
-            result[key] = deepcopy(value)
-    return result
-
-
+#The Agent State. This is where its short term memory lives
 class AgentState(TypedDict):
-    messages: Annotated[list[AnyMessage], operator.add]
-    context: str
-    current_year: int
-    available_tools: dict[str, list[dict[str, Any]]]
-    router_route: NotRequired[str]
-    plan_status: NotRequired[str]
-    plan_iterations: NotRequired[int]
-    react_iterations: NotRequired[int]
-    forced_response_due_to_recursion: NotRequired[bool]
-    data_cache: NotRequired[Annotated[dict[str, Any], merge_cache]]
-    data_catalog: NotRequired[dict[str, Any]]
-    scrape_history: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
-    tool_guidance: NotRequired[str]
-    previous_depth: NotRequired[bool]
+    messages: Annotated[list[AnyMessage], operator.add] #History of all user, tool and AI messages
+    context: str #Context prompt to guide general behavior
+    current_year: int #Current year to guide time accuracy
+    available_tools: dict[str, list[dict[str, Any]]] #Available tools so it knows what it can do
+    router_route: NotRequired[str] #The next step decided by the router node (Can be either plan node or end)
+    plan_status: NotRequired[str] #Defined as either (needs_scrape_and_tools, needs_scrape, needs_tools or ready_to_respond)
+    react_iterations: NotRequired[int] #Number of times React node has ran
+    judge_iterations: NotRequired[int] #Number of times Judge node has ran
+    judge_verdict: NotRequired[str] #Verdict from judge node: "end", "revise", or "gather_more"
+    judge_react_extensions: NotRequired[int] #Extra react iterations granted by judge when react is at its limit
+    forced_response_due_to_recursion: NotRequired[bool] #Boolean that forces response if recursion is being reached
+    session_id: NotRequired[str] #DuckDB session key — maps to the per-conversation database file
+    data_catalog: NotRequired[dict[str, Any]] #Summary of financial data cache
+    scrape_history: NotRequired[Annotated[list[dict[str, Any]], operator.add]] #History of scraped content during conversation
+    tool_guidance: NotRequired[str] #Justification for tool use written by plan node and then red by response node
+    deep_plan: NotRequired[bool] #Whether the router selected the deep-analysis path for the current request; persists across turns so the next router reads it as previous_depth
+    judge_rationale: NotRequired[str] #Critique written by judge_node explaining why it chose its verdict
+    current_response: NotRequired[str] #Latest response_node output; overwritten on every response_node call
+    current_response: NotRequired[str] #Latest response_node output; overwritten on every response_node call

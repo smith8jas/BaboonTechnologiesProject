@@ -88,6 +88,7 @@ export async function streamChatMessage({
   onThreadId,
   onStatus,
   onThought,
+  onClear,
 }) {
   // Prefer the streaming endpoint for live status and token deltas.
   // Fall back to the non-streaming request if the browser lacks a readable body.
@@ -133,14 +134,14 @@ export async function streamChatMessage({
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      readStreamEvent(line, { onDelta, onDone, onError, onSessionId, onThreadId, onStatus, onThought });
+      readStreamEvent(line, { onDelta, onDone, onError, onSessionId, onThreadId, onStatus, onThought, onClear });
     }
   }
 
   buffer += decoder.decode();
 
   if (buffer.trim()) {
-    readStreamEvent(buffer, { onDelta, onDone, onError, onSessionId, onThreadId, onStatus, onThought });
+    readStreamEvent(buffer, { onDelta, onDone, onError, onSessionId, onThreadId, onStatus, onThought, onClear });
   }
 }
 
@@ -213,5 +214,10 @@ function readStreamEvent(line, handlers) {
 
   if (event.type === 'done') {
     handlers.onDone?.();
+    return;
+  }
+
+  if (event.type === 'clear') {
+    handlers.onClear?.();
   }
 }

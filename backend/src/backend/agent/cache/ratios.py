@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+
+import duckdb
 
 from backend.services import ratio as ratio_service
 
 from .base import CacheHelpers
 from .financials import FinancialsCache
-from .schema import CACHE_CALCULATED, CACHE_RATIOS, DEPENDENCY_FINANCIALS
-
+from .session import now
 
 class RatiosCache:
-    CACHE_KEY = CACHE_RATIOS
-    BUCKET = CACHE_CALCULATED
 
     _RATIO_FUNCS = {
         "liquidity": ratio_service.get_liquidity_ratios,
@@ -24,37 +23,55 @@ class RatiosCache:
 
     @staticmethod
     def get_or_calculate(
-        cache: dict[str, Any],
+        conn: duckdb.DuckDBPyConnection,
         ticker: str,
         span: int,
         ratio_type: str,
-    ) -> tuple[dict[str, Any], bool]:
-        company = CacheHelpers.company(cache, ticker)
-        ratios_cache = company[CACHE_CALCULATED].setdefault(CACHE_RATIOS, {})
-        cached = ratios_cache.get(ratio_type)
-        if cached and CacheHelpers.coverage_satisfies(cached.get("coverage", {}), span):
-            return cached["payload"], True
+    ) -> tuple[dict, bool]:
+        t = CacheHelpers.ticker(ticker)
 
-        hf, _ = FinancialsCache.get_or_fetch(cache, ticker, span)
-        payload = RatiosCache._RATIO_FUNCS[ratio_type](hf)
-        ratios_cache[ratio_type] = CacheHelpers.calculated_entry(payload, hf, [DEPENDENCY_FINANCIALS])
+        conn.execute(
+            "SELECT span, payload FROM ratios WHERE ticker = ? AND ratio_type = ?",
+            [t, ratio_type],
+        )
+        row = conn.fetchone()
+        if row and int(row[0] or 0) >= span:
+            return json.loads(row[1]), True
+
+        hf, _ = FinancialsCache.get_or_fetch(conn, t, span)
+        fn = RatiosCache._RATIO_FUNCS.get(ratio_type)
+        if fn is None:
+            raise ValueError(f"Unknown ratio type: {ratio_type!r}. Valid: {sorted(RatiosCache._RATIO_FUNCS)}")
+        payload = fn(hf)
+
+        conn.execute("""
+            INSERT OR REPLACE INTO ratios
+                (ticker, ratio_type, payload, span, last_updated)
+            VALUES (?, ?, ?, ?, ?)
+        """, [t, ratio_type, json.dumps(payload, default=str), span, now()])
+
         return payload, False
 
     @staticmethod
-    def catalog_entry(company_cache: dict[str, Any]) -> dict | None:
-        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_RATIOS, {})
-        if not entry:
+    def catalog_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
+        t = CacheHelpers.ticker(ticker)
+        conn.execute(
+            "SELECT ratio_type, span FROM ratios WHERE ticker = ?",
+            [t],
+        )
+        rows = conn.fetchall()
+        if not rows:
             return None
-        return CacheHelpers.catalog_leaf_map(entry)
+        return {r[0]: {"available": True, "span": r[1]} for r in rows}
 
     @staticmethod
-    def payload_entry(company_cache: dict[str, Any]) -> dict | None:
-        entry = company_cache.get(CACHE_CALCULATED, {}).get(CACHE_RATIOS, {})
-        if not entry:
+    def payload_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
+        t = CacheHelpers.ticker(ticker)
+        conn.execute(
+            "SELECT ratio_type, payload FROM ratios WHERE ticker = ?",
+            [t],
+        )
+        rows = conn.fetchall()
+        if not rows:
             return None
-        result = {
-            ratio_type: data["payload"]
-            for ratio_type, data in entry.items()
-            if data.get("payload") is not None
-        }
-        return result or None
+        return {r[0]: json.loads(r[1]) for r in rows if r[1] is not None}
