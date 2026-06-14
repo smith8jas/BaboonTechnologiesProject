@@ -287,3 +287,15 @@ class DCFOutput(BaseModel):
     projected_delta_nwc:            list[float]
     pv_factors:                     list[float]
     falled_back_to_risk_free_rate:  bool = False
+
+    # WACC and components
+    wacc: float | None = None
+    cost_of_equity: float | None = None
+    cost_of_debt_after_tax: float | None = None
+    risk_free_rate: float | None = None
+    equity_risk_premium: float | None = None
+    beta: float | None = None
+    tax_rate: float | None = None
+    equity_weight: float | None = None
+    debt_weight: float | None = None
+    terminal_growth: float | None = None
