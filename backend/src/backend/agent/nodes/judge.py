@@ -30,11 +30,15 @@ async def judge_node(state: AgentState):
 
     #Stopper to avoid infinite loops
     if judge_count >= JUDGE_LIMIT - 2:
-        return {
+        result = {
             "judge_verdict": "end",
             "forced_response_due_to_recursion": True,
             "judge_iterations": judge_count + 1,
         }
+        current_response = state.get("current_response", "")
+        if current_response:
+            result["messages"] = [AIMessage(content=current_response)]
+        return result
     
     #Build judge's focused message list: all human messages + current_response in system prompt
     local_prompt = judge_prompt

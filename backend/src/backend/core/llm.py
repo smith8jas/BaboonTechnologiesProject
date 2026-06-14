@@ -8,7 +8,7 @@ load_dotenv(find_dotenv())
 LLM_MAX_TOKENS = os.getenv("LLM_MAX_TOKENS")
 
 _NODE_DEFAULTS: dict[str, tuple[str, str]] = {
-    "router":   ("anthropic", "claude-haiku-4-5-20251001"),
+    "router":   ("openai", "gpt-4.1"),
     "plan":     ("openai",    "gpt-4.1"),
     "react":    ("openai",    "gpt-4.1"),
     "response": ("anthropic", "claude-haiku-4-5-20251001"),

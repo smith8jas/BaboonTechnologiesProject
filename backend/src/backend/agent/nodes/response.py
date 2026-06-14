@@ -54,4 +54,7 @@ async def response_node(state: AgentState):
     content = response_message.content
     if isinstance(content, list):
         content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
-    return {"messages": [response_message], "current_response": content}
+    result = {"messages": [response_message]}
+    if content:
+        result["current_response"] = content
+    return result

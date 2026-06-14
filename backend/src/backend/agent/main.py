@@ -15,7 +15,7 @@ from backend.agent.runtime import activate_agent_async
 from uuid import uuid4
 
 DEBUG_NODE_UPDATES = True
-DEBUG_AGENT_STATE = False
+DEBUG_AGENT_STATE = True
 
 
 # Chatbot. This is where the user enters an input and receives a response.
@@ -93,13 +93,13 @@ if __name__ == "__main__":
 
     #Backend test starts here
 
-    #logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
 
     #Function that sets up the nodes and edges of the agent
     agent = initialize_agent()
 
     #Function that creates a png of the compiled agent and saves it in a folder
-    #save_graph_png(agent)
+    save_graph_png(agent)
 
     #Function that receives the compiled agent and initiates a loop to simulate a chatbot in the terminal
     #with the agent
