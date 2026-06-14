@@ -831,9 +831,11 @@ Several financial statement adapters do not handle edge cases gracefully:
 
 All ratio, growth, and DCF calculations iterate over lists and dictionaries using standard Python loops. For the typical 3–5 period span used in this application, performance is adequate. However, for larger spans, bulk analysis of many tickers, or future features requiring cross-sectional computation, replacing these loops with NumPy or pandas vectorized operations would substantially improve performance.
 
-### Underdeveloped build_data_payload Function
+### build_data_payload Dumps All Cached Data Regardless of Query
 
-`build_data_payload` dumps the entire DuckDB session into a single dictionary that is injected verbatim into the response node's LLM context. This includes all fields for all tickers, all fiscal years, and all computed results regardless of what the user asked. For a simple single-metric question, this means the LLM receives a large amount of irrelevant data in its context, increasing cost (prompt tokens) without improving response quality. A targeted payload builder that selects only relevant data based on the query would be more efficient.
+`build_data_payload` dumps the entire DuckDB session into a single dictionary that is injected verbatim into the response node's LLM context. This includes all fields for all tickers, all fiscal years, and all computed results regardless of what the user asked. For a simple single-metric question, this means the LLM receives a large amount of irrelevant data in its context, increasing cost (prompt tokens) without improving response quality. A targeted payload builder that selects only the data relevant to the current query would be more efficient.
+
+Note: the function now iterates dynamically over `COMPANY_TOOL_CACHES` rather than enumerating each cache manually, so adding a new cache no longer risks silent omission from the payload. The remaining limitation is selectivity, not coverage.
 
 ### LLM_MAX_TOKENS Requirement for Large Models
 
@@ -975,12 +977,30 @@ Since sessions are ephemeral temporary files (one per conversation, deleted on s
 
 **Step B4 — Register the cache in `agent/cache/__init__.py` and `catalog.py`.**
 
-Export the new class from `__init__.py`. Then add explicit calls in both functions inside `catalog.py`:
+Export the new class from `__init__.py`. Then add it to the `COMPANY_TOOL_CACHES` list at the top of `catalog.py`:
 
-- In `build_data_catalog`: add `your_cache.catalog_entry(conn, ticker)` inside the per-ticker loop, following the pattern of the existing entries.
-- In `build_data_payload`: add `your_cache.payload_entry(conn, ticker)` inside the per-ticker loop.
+```python
+COMPANY_TOOL_CACHES = [
+    FinancialsCache,
+    MarketDataCache,
+    GrowthCache,
+    RatiosCache,
+    DCFCache,
+    CompsCache,
+    InsiderTradesCache,  # ← add here
+]
+```
 
-> **Warning — silent failure point.** Both `build_data_catalog` and `build_data_payload` are manually enumerated. If you create the cache class and the DuckDB table but forget to add one of these two calls, the tool will execute and write data to DuckDB correctly, but the response node will never receive that data. There is no error — the data is simply absent from the LLM's context. Double-check that both functions in `catalog.py` have been updated.
+Both `build_data_catalog` and `build_data_payload` iterate over this list dynamically, so a single entry here is all that is required. The class must declare three class-level attributes that drive the loop:
+
+```python
+class InsiderTradesCache:
+    catalog_key = "insider_trades"       # key in catalog and payload dicts
+    catalog_category = "searched"        # "searched" or "calculated"
+    table_name = "insider_trades"        # DuckDB table name
+```
+
+`_TICKER_UNION_SQL` in `catalog.py` is also built from this list, so the new table's tickers will be included in the ticker discovery query automatically.
 
 **Step B5 — Create the LangChain tool in `agent/tools/research.py`.**
 
