@@ -38,6 +38,19 @@ logger = logging.getLogger(__name__)
 # session_id → absolute path of the session's .duckdb temp file
 _REGISTRY: dict[str, str] = {}
 
+# session_id → current query cycle number (set by router before each tool run)
+_CYCLE_REGISTRY: dict[str, int] = {}
+
+
+def set_session_cycle(session_id: str, cycle: int) -> None:
+    """Record the current query cycle for this session so cache writers can tag rows."""
+    _CYCLE_REGISTRY[session_id] = cycle
+
+
+def get_session_cycle(session_id: str) -> int:
+    """Return the current cycle for this session, defaulting to 1."""
+    return _CYCLE_REGISTRY.get(session_id, 1)
+
 # ---------------------------------------------------------------------------
 # Schema generation — column names and types derived from Pydantic models
 # so the DDL stays in sync with processing/schema.py automatically.
@@ -95,6 +108,7 @@ def _build_ddl() -> tuple[str, ...]:
     CREATE TABLE IF NOT EXISTS companies (
         ticker                              VARCHAR PRIMARY KEY,
 {_join(_model_cols(CompanyMetadata))},
+        cycle                               INTEGER DEFAULT 0,
         last_updated                        TIMESTAMPTZ
     )
     """,
@@ -112,6 +126,7 @@ def _build_ddl() -> tuple[str, ...]:
     _model_cols(CashFlowStatement, rename=_CF_RENAME),
     _model_cols(PerShare),
 )},
+        cycle                               INTEGER DEFAULT 0,
         last_updated                        TIMESTAMPTZ,
         PRIMARY KEY (ticker, fiscal_year)
     )
@@ -123,6 +138,7 @@ def _build_ddl() -> tuple[str, ...]:
         ticker                              VARCHAR PRIMARY KEY,
 {_join(_model_cols(MarketData))},
         include_rfr                         BOOLEAN,
+        cycle                               INTEGER DEFAULT 0,
         last_updated                        TIMESTAMPTZ
     )
     """,
@@ -132,6 +148,7 @@ def _build_ddl() -> tuple[str, ...]:
     CREATE TABLE IF NOT EXISTS sector_data (
         year                                INTEGER PRIMARY KEY,
 {_join(_model_cols(SectorData))},
+        cycle                               INTEGER DEFAULT 0,
         last_updated                        TIMESTAMPTZ
     )
     """,
@@ -144,6 +161,7 @@ def _build_ddl() -> tuple[str, ...]:
         statement    VARCHAR  NOT NULL,
         payload      JSON,
         span         INTEGER,
+        cycle        INTEGER DEFAULT 0,
         last_updated TIMESTAMPTZ,
         PRIMARY KEY (ticker, statement)
     )
@@ -155,6 +173,7 @@ def _build_ddl() -> tuple[str, ...]:
         ratio_type   VARCHAR  NOT NULL,
         payload      JSON,
         span         INTEGER,
+        cycle        INTEGER DEFAULT 0,
         last_updated TIMESTAMPTZ,
         PRIMARY KEY (ticker, ratio_type)
     )
@@ -168,6 +187,7 @@ def _build_ddl() -> tuple[str, ...]:
         sector_year  INTEGER,
         span         INTEGER,
         payload      JSON,
+        cycle        INTEGER DEFAULT 0,
         last_updated TIMESTAMPTZ,
         PRIMARY KEY (ticker, scenario)
     )
@@ -179,6 +199,7 @@ def _build_ddl() -> tuple[str, ...]:
         method       VARCHAR  NOT NULL,
         peer_key     VARCHAR,
         payload      JSON,
+        cycle        INTEGER DEFAULT 0,
         last_updated TIMESTAMPTZ,
         PRIMARY KEY (ticker, method)
     )
@@ -216,6 +237,7 @@ def create_session(session_id: str) -> None:
         conn.close()
 
     _REGISTRY[session_id] = path
+    _CYCLE_REGISTRY[session_id] = 0
     logger.info("Cache session created: %s → %s", session_id, path)
 
 
@@ -236,12 +258,53 @@ def open_connection(session_id: str) -> duckdb.DuckDBPyConnection:
 def close_session(session_id: str) -> None:
     """Delete the session's database file and remove it from the registry."""
     path = _REGISTRY.pop(session_id, None)
+    _CYCLE_REGISTRY.pop(session_id, None)
     if path and os.path.exists(path):
         try:
             os.unlink(path)
         except OSError:
             logger.warning("Could not delete session file: %s", path)
     logger.info("Cache session closed: %s", session_id)
+
+
+# How many recent cycles to retain per data category.
+_CALC_KEEP = 2   # keep last 2 cycles of calculated data  → delete first 3 of every 5
+_SEARCH_KEEP = 3 # keep last 3 cycles of searched data    → delete first 2 of every 5
+
+
+def purge_old_data(session_id: str, current_cycle: int) -> None:
+    """Delete stale rows from all cache tables based on cycle thresholds.
+
+    Called by the router every 5 cycles. Calculated data (cheap to recompute)
+    is purged more aggressively than searched data (requires external API calls).
+    """
+    calc_threshold = current_cycle - _CALC_KEEP
+    search_threshold = current_cycle - _SEARCH_KEEP
+
+    conn = open_connection(session_id)
+    try:
+        if calc_threshold >= 1:
+            conn.execute("DELETE FROM growth_rates WHERE cycle <= ?", [calc_threshold])
+            conn.execute("DELETE FROM ratios WHERE cycle <= ?", [calc_threshold])
+            conn.execute("DELETE FROM dcf WHERE cycle <= ?", [calc_threshold])
+            conn.execute("DELETE FROM comparables WHERE cycle <= ?", [calc_threshold])
+
+        if search_threshold >= 1:
+            conn.execute("DELETE FROM financials WHERE cycle <= ?", [search_threshold])
+            conn.execute("DELETE FROM market_data WHERE cycle <= ?", [search_threshold])
+            conn.execute("DELETE FROM sector_data WHERE cycle <= ?", [search_threshold])
+            conn.execute("""
+                DELETE FROM companies
+                WHERE ticker NOT IN (SELECT ticker FROM financials)
+                  AND ticker NOT IN (SELECT ticker FROM market_data)
+            """)
+    finally:
+        conn.close()
+
+    logger.info(
+        "Cache purged for session %s at cycle %d (calc_threshold=%d, search_threshold=%d)",
+        session_id, current_cycle, calc_threshold, search_threshold,
+    )
 
 
 # ---------------------------------------------------------------------------

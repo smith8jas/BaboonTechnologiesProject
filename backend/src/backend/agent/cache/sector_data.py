@@ -9,7 +9,7 @@ import duckdb
 from backend.processing.schema import SectorData
 from backend.services import financials as financials_service
 
-from .session import now
+from .session import get_session_cycle, now
 
 
 class SectorDataCache:
@@ -18,6 +18,7 @@ class SectorDataCache:
     def get_or_fetch(
         conn: duckdb.DuckDBPyConnection,
         year: int | None,
+        session_id: str = "",
     ) -> tuple[SectorData, bool]:
         resolved = int(year or date.today().year)
         conn.execute(
@@ -32,16 +33,16 @@ class SectorDataCache:
             }), True
 
         sd = financials_service.get_sector_data(resolved)
-        SectorDataCache._store(conn, resolved, sd)
+        SectorDataCache._store(conn, resolved, sd, session_id)
         return sd, False
 
     @staticmethod
-    def _store(conn: duckdb.DuckDBPyConnection, year: int, sd: SectorData) -> None:
+    def _store(conn: duckdb.DuckDBPyConnection, year: int, sd: SectorData, session_id: str = "") -> None:
         conn.execute("""
             INSERT OR REPLACE INTO sector_data
-                (year, equity_risk_premium, long_term_growth_rate, last_updated)
-            VALUES (?, ?, ?, ?)
-        """, [year, sd.equity_risk_premium, sd.long_term_growth_rate, now()])
+                (year, equity_risk_premium, long_term_growth_rate, cycle, last_updated)
+            VALUES (?, ?, ?, ?, ?)
+        """, [year, sd.equity_risk_premium, sd.long_term_growth_rate, get_session_cycle(session_id), now()])
 
     @staticmethod
     def catalog_entry(conn: duckdb.DuckDBPyConnection) -> list[int]:

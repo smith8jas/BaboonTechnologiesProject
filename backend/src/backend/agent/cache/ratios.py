@@ -10,7 +10,7 @@ from backend.services import ratio as ratio_service
 
 from .base import CacheHelpers
 from .financials import FinancialsCache
-from .session import now
+from .session import get_session_cycle, now
 
 class RatiosCache:
 
@@ -27,6 +27,7 @@ class RatiosCache:
         ticker: str,
         span: int,
         ratio_type: str,
+        session_id: str = "",
     ) -> tuple[dict, bool]:
         t = CacheHelpers.ticker(ticker)
 
@@ -38,7 +39,7 @@ class RatiosCache:
         if row and int(row[0] or 0) >= span:
             return json.loads(row[1]), True
 
-        hf, _ = FinancialsCache.get_or_fetch(conn, t, span)
+        hf, _ = FinancialsCache.get_or_fetch(conn, t, span, session_id=session_id)
         fn = RatiosCache._RATIO_FUNCS.get(ratio_type)
         if fn is None:
             raise ValueError(f"Unknown ratio type: {ratio_type!r}. Valid: {sorted(RatiosCache._RATIO_FUNCS)}")
@@ -46,9 +47,9 @@ class RatiosCache:
 
         conn.execute("""
             INSERT OR REPLACE INTO ratios
-                (ticker, ratio_type, payload, span, last_updated)
-            VALUES (?, ?, ?, ?, ?)
-        """, [t, ratio_type, json.dumps(payload, default=str), span, now()])
+                (ticker, ratio_type, payload, span, cycle, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [t, ratio_type, json.dumps(payload, default=str), span, get_session_cycle(session_id), now()])
 
         return payload, False
 

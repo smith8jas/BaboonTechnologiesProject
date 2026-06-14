@@ -10,7 +10,7 @@ from backend.services import growth as growth_service
 
 from .base import CacheHelpers
 from .financials import FinancialsCache
-from .session import now
+from .session import get_session_cycle, now
 
 INCOME_STATEMENT = "income_statement"
 BALANCE_SHEET = "balance_sheet"
@@ -24,6 +24,7 @@ class GrowthCache:
         ticker: str,
         span: int,
         statement: str,
+        session_id: str = "",
     ) -> tuple[dict, bool]:
         t = CacheHelpers.ticker(ticker)
 
@@ -35,7 +36,7 @@ class GrowthCache:
         if row and int(row[0] or 0) >= span:
             return json.loads(row[1]), True
 
-        hf, _ = FinancialsCache.get_or_fetch(conn, t, span)
+        hf, _ = FinancialsCache.get_or_fetch(conn, t, span, session_id=session_id)
         if statement == INCOME_STATEMENT:
             payload = growth_service.get_income_statement_growth_rates(hf)
         elif statement == BALANCE_SHEET:
@@ -45,9 +46,9 @@ class GrowthCache:
 
         conn.execute("""
             INSERT OR REPLACE INTO growth_rates
-                (ticker, statement, payload, span, last_updated)
-            VALUES (?, ?, ?, ?, ?)
-        """, [t, statement, json.dumps(payload, default=str), span, now()])
+                (ticker, statement, payload, span, cycle, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [t, statement, json.dumps(payload, default=str), span, get_session_cycle(session_id), now()])
 
         return payload, False
 

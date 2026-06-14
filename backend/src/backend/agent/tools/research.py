@@ -33,7 +33,7 @@ def get_financials(
     """
     conn = open_connection(session_id)
     try:
-        result, was_cached = FinancialsCache.get_or_fetch(conn, ticker, int(span), fiscal_years)
+        result, was_cached = FinancialsCache.get_or_fetch(conn, ticker, int(span), fiscal_years, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_financials", was_cached, ticker=ticker, span=span, fiscal_years=fiscal_years)
@@ -63,7 +63,7 @@ def get_market_data(
     """
     conn = open_connection(session_id)
     try:
-        result, was_cached = MarketDataCache.get_or_fetch(conn, ticker, include_rfr)
+        result, was_cached = MarketDataCache.get_or_fetch(conn, ticker, include_rfr, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_market_data", was_cached, ticker=ticker, include_rfr=include_rfr)
@@ -85,7 +85,7 @@ def get_sector_data(
     """Pull sector-level financial assumptions for a given year."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = SectorDataCache.get_or_fetch(conn, year)
+        result, was_cached = SectorDataCache.get_or_fetch(conn, year, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_sector_data", was_cached, year=year)

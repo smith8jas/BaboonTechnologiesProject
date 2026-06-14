@@ -11,7 +11,7 @@ from backend.processing.schema import HistoricalFinancials
 from backend.services import financials as financials_service
 
 from .base import CacheHelpers
-from .session import now
+from .session import get_session_cycle, now
 
 
 def _fy_str(year: Any) -> str:
@@ -105,6 +105,7 @@ class FinancialsCache:
         ticker: str,
         span: int = 5,
         fiscal_years: list[int] | None = None,
+        session_id: str = "",
     ) -> tuple[HistoricalFinancials, bool]:
         t = CacheHelpers.ticker(ticker)
 
@@ -113,14 +114,14 @@ class FinancialsCache:
                 return FinancialsCache._from_db_by_years(conn, t, fiscal_years), True
             needed_span = max(span, date_type.today().year - min(int(y) for y in fiscal_years) + 2)
             hf = financials_service.get_cached_financials(t, int(needed_span))
-            FinancialsCache._store(conn, hf, int(needed_span))
+            FinancialsCache._store(conn, hf, int(needed_span), session_id)
             return FinancialsCache._filter_by_years(hf, fiscal_years), False
 
         if FinancialsCache._has(conn, t, span):
             return FinancialsCache._from_db(conn, t, span), True
 
         hf = financials_service.get_cached_financials(t, int(span))
-        FinancialsCache._store(conn, hf, int(span))
+        FinancialsCache._store(conn, hf, int(span), session_id)
         return hf, False
 
     @staticmethod
@@ -177,21 +178,22 @@ class FinancialsCache:
         })
 
     @staticmethod
-    def _store(conn: duckdb.DuckDBPyConnection, hf: HistoricalFinancials, span: int) -> None:
+    def _store(conn: duckdb.DuckDBPyConnection, hf: HistoricalFinancials, span: int, session_id: str = "") -> None:
         t = hf.ticker
         m = hf.metadata
         ts = now()
+        cycle = get_session_cycle(session_id)
 
         conn.execute("""
             INSERT OR REPLACE INTO companies
                 (ticker, name, cik, sic, industry, fiscal_year_end,
                  entity_type, filer_category, state_of_incorporation,
-                 website, phone, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 website, phone, cycle, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             t, m.name, m.cik, m.sic, m.industry, m.fiscal_year_end,
             m.entity_type, m.filer_category, m.state_of_incorporation,
-            m.website, m.phone, ts,
+            m.website, m.phone, cycle, ts,
         ])
 
         for period in hf.periods:
@@ -210,7 +212,7 @@ class FinancialsCache:
                     accounts_receivable, accounts_payable, short_term_debt, long_term_debt,
                     total_current_liabilities, total_liabilities, total_equity, net_working_capital,
                     cf_net_income, cf_interest_expense, capex, depreciation_amortization, cfo, fcf,
-                    basic_shares, diluted_shares, last_updated
+                    basic_shares, diluted_shares, cycle, last_updated
                 ) VALUES (
                     ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
@@ -219,7 +221,7 @@ class FinancialsCache:
                     ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?
+                    ?, ?, ?, ?
                 )
             """, [
                 t, fy, period.period_end.isoformat(),
@@ -229,7 +231,7 @@ class FinancialsCache:
                 BS.accounts_receivable, BS.accounts_payable, BS.short_term_debt, BS.long_term_debt,
                 BS.total_current_liabilities, BS.total_liabilities, BS.total_equity, BS.net_working_capital,
                 CF.net_income, CF.interest_expense, CF.capex, CF.depreciation_amortization, CF.cfo, CF.fcf,
-                PS.basic_shares, PS.diluted_shares, ts,
+                PS.basic_shares, PS.diluted_shares, cycle, ts,
             ])
 
     @staticmethod

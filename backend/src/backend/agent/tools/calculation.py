@@ -27,7 +27,7 @@ def get_income_statement_growth_rates(
     """Calculate year-over-year income statement growth rates across the latest span fiscal periods."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_INCOME_STATEMENT)
+        result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_INCOME_STATEMENT, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_income_statement_growth_rates", was_cached, ticker=ticker, span=span)
@@ -43,7 +43,7 @@ def get_balance_sheet_growth_rates(
     """Calculate year-over-year balance sheet growth rates across the latest span fiscal periods."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_BALANCE_SHEET)
+        result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_BALANCE_SHEET, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_balance_sheet_growth_rates", was_cached, ticker=ticker, span=span)
@@ -59,7 +59,7 @@ def get_liquidity_ratios(
     """Calculate liquidity ratios across the latest span fiscal periods."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_LIQUIDITY)
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_LIQUIDITY, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_liquidity_ratios", was_cached, ticker=ticker, span=span)
@@ -75,7 +75,7 @@ def get_solvency_ratios(
     """Calculate solvency ratios across the latest span fiscal periods."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_SOLVENCY)
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_SOLVENCY, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_solvency_ratios", was_cached, ticker=ticker, span=span)
@@ -91,7 +91,7 @@ def get_profitability_ratios(
     """Calculate profitability ratios across the latest span fiscal periods."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_PROFITABILITY)
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_PROFITABILITY, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_profitability_ratios", was_cached, ticker=ticker, span=span)
@@ -107,7 +107,7 @@ def get_efficiency_ratios(
     """Calculate working capital efficiency ratios across the latest span fiscal periods."""
     conn = open_connection(session_id)
     try:
-        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_EFFICIENCY)
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_EFFICIENCY, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_efficiency_ratios", was_cached, ticker=ticker, span=span)
@@ -125,7 +125,7 @@ def run_dcf_valuation(
     year = year or date.today().year
     conn = open_connection(session_id)
     try:
-        result, was_cached = DCFCache.get_or_calculate(conn, ticker, int(span), int(year))
+        result, was_cached = DCFCache.get_or_calculate(conn, ticker, int(span), int(year), session_id=session_id)
     finally:
         conn.close()
     log_cache_status("run_dcf_valuation", was_cached, ticker=ticker, span=span, year=year)
@@ -164,9 +164,9 @@ def get_comps_valuation(
     conn = open_connection(session_id)
     try:
         if peers:
-            result, was_cached = CompsCache.get_or_calculate_peer(conn, ticker, peers)
+            result, was_cached = CompsCache.get_or_calculate_peer(conn, ticker, peers, session_id=session_id)
         else:
-            result, was_cached = CompsCache.get_or_calculate_damodaran(conn, ticker)
+            result, was_cached = CompsCache.get_or_calculate_damodaran(conn, ticker, session_id=session_id)
     finally:
         conn.close()
     log_cache_status("get_comps_valuation", was_cached, ticker=ticker)

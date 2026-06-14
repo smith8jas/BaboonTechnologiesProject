@@ -12,7 +12,7 @@ from .base import CacheHelpers
 from .financials import FinancialsCache
 from .market_data import MarketDataCache
 from .sector_data import SectorDataCache
-from .session import now
+from .session import get_session_cycle, now
 
 SCENARIO_DEFAULT = "default"
 
@@ -25,6 +25,7 @@ class DCFCache:
         ticker: str,
         span: int,
         year: int,
+        session_id: str = "",
     ) -> tuple[dict, bool]:
         t = CacheHelpers.ticker(ticker)
 
@@ -36,9 +37,9 @@ class DCFCache:
         if row and int(row[0] or 0) >= span and int(row[1] or 0) == int(year):
             return json.loads(row[2]), True
 
-        hf, _ = FinancialsCache.get_or_fetch(conn, t, span)
-        md, _ = MarketDataCache.get_or_fetch(conn, t, include_rfr=True)
-        sd, _ = SectorDataCache.get_or_fetch(conn, year)
+        hf, _ = FinancialsCache.get_or_fetch(conn, t, span, session_id=session_id)
+        md, _ = MarketDataCache.get_or_fetch(conn, t, include_rfr=True, session_id=session_id)
+        sd, _ = SectorDataCache.get_or_fetch(conn, year, session_id=session_id)
 
         assumptions = dcf_engine.build_assumptions(hf, md, sd)
         valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
@@ -47,11 +48,11 @@ class DCFCache:
 
         conn.execute("""
             INSERT OR REPLACE INTO dcf
-                (ticker, scenario, fiscal_year, sector_year, span, payload, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (ticker, scenario, fiscal_year, sector_year, span, payload, cycle, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             t, SCENARIO_DEFAULT, result.fiscal_year, int(year), span,
-            json.dumps(payload), now(),
+            json.dumps(payload), get_session_cycle(session_id), now(),
         ])
 
         return payload, False

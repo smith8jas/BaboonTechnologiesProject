@@ -9,7 +9,7 @@ import duckdb
 from backend.services import comparables as comparables_service
 
 from .base import CacheHelpers
-from .session import now
+from .session import get_session_cycle, now
 
 
 class CompsCache:
@@ -19,6 +19,7 @@ class CompsCache:
         conn: duckdb.DuckDBPyConnection,
         ticker: str,
         peers: list[str],
+        session_id: str = "",
     ) -> tuple[dict, bool]:
         t = CacheHelpers.ticker(ticker)
         peer_key = ",".join(sorted(p.strip().upper() for p in peers))
@@ -35,9 +36,9 @@ class CompsCache:
 
         conn.execute("""
             INSERT OR REPLACE INTO comparables
-                (ticker, method, peer_key, payload, last_updated)
-            VALUES (?, 'peer', ?, ?, ?)
-        """, [t, peer_key, json.dumps(payload, default=str), now()])
+                (ticker, method, peer_key, payload, cycle, last_updated)
+            VALUES (?, 'peer', ?, ?, ?, ?)
+        """, [t, peer_key, json.dumps(payload, default=str), get_session_cycle(session_id), now()])
 
         return payload, False
 
@@ -45,6 +46,7 @@ class CompsCache:
     def get_or_calculate_damodaran(
         conn: duckdb.DuckDBPyConnection,
         ticker: str,
+        session_id: str = "",
     ) -> tuple[dict, bool]:
         t = CacheHelpers.ticker(ticker)
 
@@ -60,9 +62,9 @@ class CompsCache:
 
         conn.execute("""
             INSERT OR REPLACE INTO comparables
-                (ticker, method, peer_key, payload, last_updated)
-            VALUES (?, 'damodaran', NULL, ?, ?)
-        """, [t, json.dumps(payload, default=str), now()])
+                (ticker, method, peer_key, payload, cycle, last_updated)
+            VALUES (?, 'damodaran', NULL, ?, ?, ?)
+        """, [t, json.dumps(payload, default=str), get_session_cycle(session_id), now()])
 
         return payload, False
 

@@ -27,3 +27,4 @@ class AgentState(TypedDict):
     judge_rationale: NotRequired[str] #Critique written by judge_node explaining why it chose its verdict
     current_response: NotRequired[str] #Latest response_node output; overwritten on every response_node call
     current_response: NotRequired[str] #Latest response_node output; overwritten on every response_node call
+    query_count: NotRequired[int] #Number of user queries processed in this conversation; drives cache cleanup

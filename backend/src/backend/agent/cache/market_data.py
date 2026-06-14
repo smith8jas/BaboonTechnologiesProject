@@ -8,7 +8,7 @@ from backend.processing.schema import MarketData
 from backend.services import financials as financials_service
 
 from .base import CacheHelpers
-from .session import now
+from .session import get_session_cycle, now
 
 
 class MarketDataCache:
@@ -18,12 +18,13 @@ class MarketDataCache:
         conn: duckdb.DuckDBPyConnection,
         ticker: str,
         include_rfr: bool = True,
+        session_id: str = "",
     ) -> tuple[MarketData, bool]:
         t = CacheHelpers.ticker(ticker)
         if MarketDataCache._has(conn, t, include_rfr):
             return MarketDataCache._from_db(conn, t), True
         md = financials_service.get_market_data(t, include_rfr)
-        MarketDataCache._store(conn, t, md, include_rfr)
+        MarketDataCache._store(conn, t, md, include_rfr, session_id)
         return md, False
 
     @staticmethod
@@ -61,15 +62,17 @@ class MarketDataCache:
         ticker: str,
         md: MarketData,
         include_rfr: bool,
+        session_id: str = "",
     ) -> None:
         conn.execute("""
             INSERT OR REPLACE INTO market_data
                 (ticker, current_price, beta, shares_outstanding, market_cap,
-                 risk_free_rate, include_rfr, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 risk_free_rate, include_rfr, cycle, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             ticker, md.current_price, md.beta, md.shares_outstanding,
-            md.market_cap, md.risk_free_rate, bool(include_rfr), now(),
+            md.market_cap, md.risk_free_rate, bool(include_rfr),
+            get_session_cycle(session_id), now(),
         ])
 
     @staticmethod
