@@ -40,9 +40,9 @@ class DCFCache:
         if row and int(row[0] or 0) >= span and int(row[1] or 0) == int(year):
             return json.loads(row[2]), True
 
-        hf, _ = FinancialsCache.get_or_fetch(conn, t, span, session_id=session_id)
-        md, _ = MarketDataCache.get_or_fetch(conn, t, include_rfr=True, session_id=session_id)
-        sd, _ = SectorDataCache.get_or_fetch(conn, year, session_id=session_id)
+        hf = FinancialsCache.get_from_db(conn, t, span)
+        md = MarketDataCache.get_from_db(conn, t, include_rfr=True)
+        sd = SectorDataCache.get_from_db(conn, year)
 
         assumptions = dcf_engine.build_assumptions(hf, md, sd)
         valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
@@ -73,11 +73,23 @@ class DCFCache:
         result = {}
         for scenario, fiscal_year, payload_json in rows:
             payload = json.loads(payload_json) if payload_json else {}
+            projection_years = payload.get("projection_years", [])
+            wacc = payload.get("wacc")
+            terminal_growth = payload.get("terminal_growth")
+            intrinsic_value_per_share = payload.get("intrinsic_value_per_share")
+            last_projection = projection_years[-1] if projection_years else "N/A"
+            wacc_str = f"{wacc:.1%}" if wacc is not None else "N/A"
+            tg_str = f"{terminal_growth:.1%}" if terminal_growth is not None else "N/A"
+            iv_str = f"${intrinsic_value_per_share:.2f}/share" if intrinsic_value_per_share is not None else "N/A"
             result[scenario] = {
                 "available": True,
                 "base_fiscal_year": fiscal_year,
-                "projection_years": payload.get("projection_years", []),
-                "intrinsic_value_per_share": payload.get("intrinsic_value_per_share"),
+                "projection_years": projection_years,
+                "intrinsic_value_per_share": intrinsic_value_per_share,
+                "summary": (
+                    f"DCF valuation based on {fiscal_year} actuals, projected through {last_projection}. "
+                    f"WACC={wacc_str}, terminal growth={tg_str}, intrinsic value={iv_str}."
+                ),
             }
         return result
 

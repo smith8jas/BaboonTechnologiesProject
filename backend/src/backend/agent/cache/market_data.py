@@ -7,7 +7,7 @@ import duckdb
 from backend.processing.schema import MarketData
 from backend.services import financials as financials_service
 
-from .base import CacheHelpers
+from .base import CacheMissError, CacheHelpers
 from .session import get_session_cycle, now
 
 
@@ -24,11 +24,27 @@ class MarketDataCache:
         session_id: str = "",
     ) -> tuple[MarketData, bool]:
         t = CacheHelpers.ticker(ticker)
-        if MarketDataCache._has(conn, t, include_rfr):
-            return MarketDataCache._from_db(conn, t), True
-        md = financials_service.get_market_data(t, include_rfr)
-        MarketDataCache._store(conn, t, md, include_rfr, session_id)
-        return md, False
+        try:
+            return MarketDataCache.get_from_db(conn, t, include_rfr), True
+        except CacheMissError:
+            md = financials_service.get_market_data(t, include_rfr)
+            MarketDataCache._store(conn, t, md, include_rfr, session_id)
+            return md, False
+
+    @staticmethod
+    def get_from_db(
+        conn: duckdb.DuckDBPyConnection,
+        ticker: str,
+        include_rfr: bool = True,
+    ) -> MarketData:
+        """Read market data from DuckDB only. Raises CacheMissError if not cached."""
+        t = CacheHelpers.ticker(ticker)
+        if not MarketDataCache._has(conn, t, include_rfr):
+            raise CacheMissError(
+                f"Market data for {t} not in session cache — "
+                "call get_market_data before any calculation tool that requires it."
+            )
+        return MarketDataCache._from_db(conn, t)
 
     @staticmethod
     def _has(conn: duckdb.DuckDBPyConnection, ticker: str, include_rfr: bool) -> bool:
@@ -88,10 +104,15 @@ class MarketDataCache:
         row = conn.fetchone()
         if not row:
             return None
+        include_rfr = bool(row[0])
         return {
             "available": True,
-            "include_rfr": bool(row[0]),
-            "summary": f"Market data for {t} is available.",
+            "include_rfr": include_rfr,
+            "summary": (
+                f"Current price, beta, shares outstanding, market cap, and risk-free rate available for {t}."
+                if include_rfr else
+                f"Current price, beta, shares outstanding, and market cap available for {t}."
+            ),
         }
 
     @staticmethod

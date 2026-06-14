@@ -8,7 +8,6 @@ from langchain_core.messages import AIMessage, SystemMessage
 from backend.core.llm import NODE_PROVIDERS, get_node_model
 
 from .messages import messages_for_llm
-from .prompts import data_dictionary
 from .state import AgentState
 from .tools import tools
 
@@ -16,9 +15,9 @@ from .tools import tools
 # All "who sees what" policy lives here — nodes just pass their name to invoke_llm*.
 _NODE_CONTEXT: dict[str, set[str]] = {
     "router":   {"available_tools", "previous_depth"},
-    "plan":     {"available_tools"},
+    "plan":     {"available_tools", "cached_data_catalog"},
     "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale"},
-    "response": {"cached_data_catalog", "scrape_history", "forced_response_due_to_recursion"},
+    "response": {"available_tools", "cached_data_catalog", "scrape_history", "forced_response_due_to_recursion"},
     "judge":    set(),
     "scrape":   {"scrape_history"},
 }
@@ -88,7 +87,6 @@ def build_system_prompt(
 
     stable = (
         f"\n    Universal agent instructions:\n    {state.get('context', '')}\n\n"
-        f"    Data dictionary:\n    {data_dictionary}\n\n"
         f"    Node instructions:\n    {node_prompt}"
     )
     volatile = f"\n\n    Runtime context:\n    {json.dumps(context, indent=2, default=str)}\n    "

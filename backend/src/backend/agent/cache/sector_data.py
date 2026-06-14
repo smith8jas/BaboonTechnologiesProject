@@ -9,6 +9,7 @@ import duckdb
 from backend.processing.schema import SectorData
 from backend.services import financials as financials_service
 
+from .base import CacheMissError
 from .session import get_session_cycle, now
 
 
@@ -21,20 +22,34 @@ class SectorDataCache:
         session_id: str = "",
     ) -> tuple[SectorData, bool]:
         resolved = int(year or date.today().year)
+        try:
+            return SectorDataCache.get_from_db(conn, resolved), True
+        except CacheMissError:
+            sd = financials_service.get_sector_data(resolved)
+            SectorDataCache._store(conn, resolved, sd, session_id)
+            return sd, False
+
+    @staticmethod
+    def get_from_db(
+        conn: duckdb.DuckDBPyConnection,
+        year: int | None,
+    ) -> SectorData:
+        """Read sector data from DuckDB only. Raises CacheMissError if not cached."""
+        resolved = int(year or date.today().year)
         conn.execute(
             "SELECT equity_risk_premium, long_term_growth_rate FROM sector_data WHERE year = ?",
             [resolved],
         )
         row = conn.fetchone()
-        if row:
-            return SectorData.model_validate({
-                "equity_risk_premium": row[0],
-                "long_term_growth_rate": row[1],
-            }), True
-
-        sd = financials_service.get_sector_data(resolved)
-        SectorDataCache._store(conn, resolved, sd, session_id)
-        return sd, False
+        if not row:
+            raise CacheMissError(
+                f"Sector data for year {resolved} not in session cache — "
+                "call get_sector_data before run_dcf_valuation."
+            )
+        return SectorData.model_validate({
+            "equity_risk_premium": row[0],
+            "long_term_growth_rate": row[1],
+        })
 
     @staticmethod
     def _store(conn: duckdb.DuckDBPyConnection, year: int, sd: SectorData, session_id: str = "") -> None:

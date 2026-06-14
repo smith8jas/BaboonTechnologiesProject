@@ -15,6 +15,11 @@ from .session import get_session_cycle, now
 INCOME_STATEMENT = "income_statement"
 BALANCE_SHEET = "balance_sheet"
 
+_GROWTH_SUMMARIES = {
+    INCOME_STATEMENT: "YoY growth rates for revenue, gross profit, EBIT, and net income",
+    BALANCE_SHEET:    "YoY growth rates for total assets, equity, debt, and working capital",
+}
+
 
 class GrowthCache:
     catalog_key = "growth"
@@ -39,7 +44,7 @@ class GrowthCache:
         if row and int(row[0] or 0) >= span:
             return json.loads(row[1]), True
 
-        hf, _ = FinancialsCache.get_or_fetch(conn, t, span, session_id=session_id)
+        hf = FinancialsCache.get_from_db(conn, t, span)
         if statement == INCOME_STATEMENT:
             payload = growth_service.get_income_statement_growth_rates(hf)
         elif statement == BALANCE_SHEET:
@@ -65,7 +70,14 @@ class GrowthCache:
         rows = conn.fetchall()
         if not rows:
             return None
-        return {r[0]: {"available": True, "span": r[1]} for r in rows}
+        return {
+            r[0]: {
+                "available": True,
+                "span": r[1],
+                "summary": f"{_GROWTH_SUMMARIES.get(r[0], r[0])} — {r[1]} periods.",
+            }
+            for r in rows
+        }
 
     @staticmethod
     def payload_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:

@@ -22,7 +22,6 @@ from typing import Optional
 import duckdb
 import pandas as pd
 
-from backend.adapters.damodaran import fetch_ev_sales, fetch_price_sales, fetch_trailing_pe
 from backend.processing.schema import HistoricalFinancials, MarketData
 
 # ---------------------------------------------------------------------------
@@ -200,16 +199,16 @@ def _value_band(implied: dict[str, float | None]) -> dict:
 
 def peer_comps(conn: duckdb.DuckDBPyConnection, ticker: str, peers: list[str]) -> dict:
     from backend.agent.cache import FinancialsCache, MarketDataCache
-    target_fin, _ = FinancialsCache.get_or_fetch(conn, ticker)
-    target_mkt, _ = MarketDataCache.get_or_fetch(conn, ticker)
+    target_fin = FinancialsCache.get_from_db(conn, ticker)
+    target_mkt = MarketDataCache.get_from_db(conn, ticker)
 
     peer_results: list[dict] = []
     dropped: list[dict] = []
 
     for peer in peers:
         try:
-            peer_fin, _ = FinancialsCache.get_or_fetch(conn, peer)
-            peer_mkt, _ = MarketDataCache.get_or_fetch(conn, peer)
+            peer_fin = FinancialsCache.get_from_db(conn, peer)
+            peer_mkt = MarketDataCache.get_from_db(conn, peer)
             result = _compute_multiples(peer_fin, peer_mkt)
             result["ticker"] = peer
             peer_results.append(result)
@@ -240,10 +239,11 @@ def peer_comps(conn: duckdb.DuckDBPyConnection, ticker: str, peers: list[str]) -
 # Path B — Damodaran sector fallback
 # ---------------------------------------------------------------------------
 
-def damodaran_fallback(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict:
+def damodaran_fallback(conn: duckdb.DuckDBPyConnection, ticker: str, session_id: str = "") -> dict:
     from backend.agent.cache import FinancialsCache, MarketDataCache
-    fin, _ = FinancialsCache.get_or_fetch(conn, ticker)
-    mkt, _ = MarketDataCache.get_or_fetch(conn, ticker)
+    from backend.agent.cache.damodaran import DamodaranSectorCache
+    fin = FinancialsCache.get_from_db(conn, ticker)
+    mkt = MarketDataCache.get_from_db(conn, ticker)
 
     sic: int | None = getattr(fin.metadata, "sic", None)
     if sic is None:
@@ -261,9 +261,10 @@ def damodaran_fallback(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict:
     if industry is None:
         return {"error": f"SIC {sic} unmapped — extend sic.csv", "notes": notes}
 
-    sector_ev_sales = fetch_ev_sales(industry)
-    sector_ps       = fetch_price_sales(industry)
-    sector_pe       = fetch_trailing_pe(industry)
+    sector_multiples = DamodaranSectorCache.get_or_fetch(conn, industry, session_id)
+    sector_ev_sales  = sector_multiples["ev_sales"]
+    sector_ps        = sector_multiples["price_sales"]
+    sector_pe        = sector_multiples["trailing_pe"]
 
     period = fin.periods[-1]
     IS     = period.income_statement

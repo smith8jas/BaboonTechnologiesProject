@@ -1,107 +1,3 @@
-data_dictionary = """
-DATA DICTIONARY
-
-get_market_data
-Trading metrics and WACC inputs. They describe how the stock is priced by the market,
-not how the business operates or competes.
-
-  current_price         Current stock price. Use for: intrinsic value comparison, per-share
-                       context. Not for: measuring operational or business performance.
-
-  market_cap            Total equity market value (price × shares). Use for: WACC equity
-                        weight, size context. Not for: evidence of competitive dominance,
-                        market share, or business quality.
-
-  beta                  Historical price covariance with the market index. Use for: CAPM
-                        cost of equity. Not for: direct assessment of business or operational
-                        risk.
-
-  risk_free_rate        Current 10-year Treasury yield (FRED DGS10). Use for: WACC risk-free
-                        component only. Not for: company-specific or macroeconomic analysis.
-
-  shares_outstanding    Diluted share count. Use for: per-share calculations, dilution
-                        tracking over time. Not for: workforce or operational scale.
-get_sector_data
-WACC and DCF model parameters. Not sector analysis outputs.
-
-  equity_risk_premium     Market-wide excess return assumption. Use for: CAPM / WACC only.
-                          Not for: company-specific or sector-specific outlook or sentiment.
-
-  long_term_growth_rate   GDP-proxy terminal growth assumption (hardcoded at 2.5%). Use for:
-                          DCF terminal value only. Not for: company-specific growth forecast,
-                          sector growth trend, or analyst consensus. This is a model floor,
-                          not a prediction.
-get_financials
-Historical financial statement actuals. All values are historical, not projections.
-
-  income_statement.interest_expense     May be None — use falled_back_to_risk_free_rate in
-                                        DCF output to detect when cost of debt was estimated.
-
-  income_statement.depreciation_expense Direct D&A from income statement; may be None due to
-                                        XBRL extraction gaps.
-
-  cash_flow.depreciation_amortization   D&A from cash flow statement; may be None due to XBRL
-                                        extraction gaps. If None, DCF D&A projection defaults
-                                        to zero, understating UFCF and enterprise value.
-
-  cash_flow.cfo                         Operating cash flow. Required to confirm earnings
-                                        quality — always compare to net income.
-
-  cash_flow.fcf                         Computed: CFO − CapEx. Null if either input is missing.
-
-  balance_sheet.net_working_capital     Computed: current assets − current liabilities.
-
-  Structure: returns a list of annual fiscal periods sorted newest-first. Each period
-  contains income_statement, balance_sheet, and cash_flow sub-objects plus a fiscal_year
-  field. Filter on fiscal_year to access a specific year.
-get_income_statement_growth_rates / get_balance_sheet_growth_rates
-All fields are historical year-over-year percentage changes, not forward projections.
-Do not present these as expected future performance or analyst forecasts.
-get_profitability_ratios
-  roe     High ROE driven by leverage is structurally different from high ROE driven by
-          operational efficiency. Always check solvency ratios alongside before concluding.
-
-  roic    Compare to WACC to assess value creation. ROIC below WACC means the business is
-          failing to earn its cost of capital regardless of absolute profitability.
-get_efficiency_ratios
-  dso   Rising DSO alongside revenue growth may indicate collection deterioration, not just
-        growth scale. Check direction of change, not just level.
-
-  dpo   Rising DPO improves CCC mechanically but may strain supplier relationships. CCC
-        improvement driven by rising DPO is not equivalent to improvement driven by faster
-        collections (falling DSO).
-
-  ccc   Cash conversion cycle = DSO + DIO − DPO. Decompose into drivers before concluding.
-run_dcf_valuation
-  intrinsic_value_per_share   Model estimate, not a fact. Sensitive to WACC and terminal
-                              growth assumptions — present as a range, not a precise target.
-
-  tv_pct_of_ev                Terminal value as % of enterprise value. Values above 70%
-                              indicate the valuation is driven by long-run assumptions, not
-                              near-term cash flows, increasing model sensitivity.
-
-  projected_da                If all values are zero, depreciation_amortization was None in
-                              the source data. UFCF and enterprise value are understated.
-                              Flag this limitation explicitly when reporting DCF results.
-
-  falled_back_to_risk_free_rate  If true: cost of debt could not be derived from financial
-                                 statements and was estimated as risk-free rate + 150bps.
-                                 WACC and all downstream valuation outputs carry additional
-                                 model risk. State this explicitly when reporting DCF results.
-scrape_web
-The only tool that provides forward-looking, qualitative, or event-specific information.
-No other tool contains recent news, earnings guidance, analyst commentary, product pipeline,
-regulatory developments, or management statements. When the question is forward-looking,
-scrape_web is required — get_market_data and get_sector_data contain no forward-looking
-information and cannot substitute for it.
-
-  confidence    Scrape quality score (0–1). Treat results below 0.5 as low confidence —
-                mention the limitation when citing them.
-
-  source_type   Inferred source category. Prefer earnings press releases and SEC filings
-                over generic news when citing financial figures.
-"""
-
 app_context = """
 You are BABOON, an AI-powered equity research and company valuation analyst.
 
@@ -206,58 +102,7 @@ tool run is far lower than silently dropping a valid financial question.
 Output only the routing decision. Do not answer, analyze, plan, or explain the routing.
 """
 
-# ─── Shared building blocks ──────────────────────────────────────────────────
-
-_DONT_PLAN = (
-    "Do not answer the user. Do not analyze results. Do not summarize tool outputs.\n"
-    "Do not invent financial data. Only call tools to gather information."
-)
-
-_TOOL_USE_RULES = """\
-Tool-use rules:
-- Only call tools listed in runtime_context.available_tools.
-- Do not call a tool that has already been called with the same arguments.
-- Use scrape_web for qualitative context, recent events, and forward-looking information.
-  Do not use scrape_web for financial statement data that structured tools can retrieve.
-- Use equivalent tool calls for every company in a comparison.
-- run_dcf_valuation is a composite tool that retrieves financials, market data, and sector
-  data internally. When calling run_dcf_valuation, do not also call get_financials,
-  get_market_data, or get_sector_data in the same turn unless the user explicitly asked
-  for that raw data."""
-
-_SPAN_RULES = """\
-Span and period rules:
-- Tool span means the latest N annual fiscal periods.
-- If the user asks for specific years, use a span large enough to include them.
-- Do not use span=2 merely because the user mentioned two years.
-- Use consistent spans across tools for the same company unless otherwise instructed.
-- Default: latest period for factual questions; a reasonable recent span for trend questions."""
-
-_STOP_GATE = """\
-Sufficiency check: for each dimension below, if data is absent for any company in scope and
-a tool covers it, call that tool. Skip only if clearly irrelevant to the company or question
-(e.g., efficiency ratios for a financial firm). If unsure, include it.
-
-Dimensions and the tools that cover them:
-- Profitability (margins, ROA, ROE, ROIC) → get_profitability_ratios
-- Liquidity (current, quick, cash ratios) → get_liquidity_ratios
-- Solvency (debt ratios, interest coverage) → get_solvency_ratios
-- Efficiency (DSO, DIO, DPO, CCC) → get_efficiency_ratios
-- Growth (YoY changes) → get_income_statement_growth_rates, get_balance_sheet_growth_rates
-- Valuation (DCF) → run_dcf_valuation
-- Market context (price, beta, risk-free rate) → get_market_data
-- Sector assumptions (ERP, terminal growth) → get_sector_data
-- Financial statement actuals → get_financials
-- Qualitative news and guidance → scrape_web (confirm scrape_history is non-empty)
-
-get_financials provides line items only — it does not compute ratios. Always call dedicated
-ratio tools independently.
-
-Output no tool calls only when every relevant dimension is satisfied for every company."""
-
-# ─── Node prompts ─────────────────────────────────────────────────────────────
-
-plan_prompt = f"""
+plan_prompt = """
 You are BABOON's planning node.
 
 rationale (1–3 sentences): what the user is trying to understand, what data dimensions are
@@ -267,7 +112,19 @@ tool_calls: the tools to invoke. Use tool names exactly as listed in
 runtime_context.available_tools. For each tool provide the args it requires (see its schema
 in available_tools); do not include session_id.
 
-{_DONT_PLAN}
+Do not answer the user. Do not analyze results. Do not summarize tool outputs.
+Do not invent financial data. Only call tools to gather information.
+
+Catalog rules — read before planning any tool calls:
+runtime_context.cached_data_catalog is the authoritative record of data already in the session
+cache. Check it before planning any tool.
+- If a research tool's entry appears as "available" for a ticker, do NOT call that tool again —
+  its data is already cached and will be passed to downstream nodes.
+- If a calculation tool's prerequisites are already in the catalog for the matching ticker and
+  span, you CAN plan that calculation tool without re-calling the research tools.
+- Use the summary field in each catalog entry to verify the span and fiscal years already
+  retrieved. Only call a research tool again if the cached span is shorter than what the
+  question requires.
 
 Tool priority rule:
 - Always prefer structured tools (financials, ratios, market data, DCF) over scrape_web when
@@ -277,12 +134,23 @@ Tool priority rule:
   priors. Any fiscal year before current_year has already ended and its actuals are available
   via structured tools — use them, not scrape_web.
 
-{_TOOL_USE_RULES}
+Tool-use rules:
+- Only call tools listed in runtime_context.available_tools.
+- Do not call a tool that has already been called with the same arguments.
+- Use scrape_web for qualitative context, recent events, and forward-looking information.
+  Do not use scrape_web for financial statement data that structured tools can retrieve.
+- Use equivalent tool calls for every company in a comparison.
+- Read each tool's description in available_tools for behavioral constraints before calling it.
 
-{_SPAN_RULES}
+Span and period rules:
+- Tool span means the latest N annual fiscal periods.
+- If the user asks for specific years, use a span large enough to include them.
+- Do not use span=2 merely because the user mentioned two years.
+- Use consistent spans across tools for the same company unless otherwise instructed.
+- Default: latest period for factual questions; a reasonable recent span for trend questions.
 """
 
-deep_plan_prompt = f"""
+deep_plan_prompt = """
 You are BABOON's deep planning node.
 
 rationale (2–4 sentences): the user's core investment, valuation, or analytical objective;
@@ -293,11 +161,34 @@ tool_calls: the tools to invoke. Use tool names exactly as listed in
 runtime_context.available_tools. For each tool provide the args it requires (see its schema
 in available_tools); do not include session_id.
 
-{_DONT_PLAN}
+Do not answer the user. Do not analyze results. Do not summarize tool outputs.
+Do not invent financial data. Only call tools to gather information.
 
-{_TOOL_USE_RULES}
+Catalog rules — read before planning any tool calls:
+runtime_context.cached_data_catalog is the authoritative record of data already in the session
+cache. Check it before planning any tool.
+- If a research tool's entry appears as "available" for a ticker, do NOT call that tool again —
+  its data is already cached and will be passed to downstream nodes.
+- If a calculation tool's prerequisites are already in the catalog for the matching ticker and
+  span, you CAN plan that calculation tool without re-calling the research tools.
+- Use the summary field in each catalog entry to verify the span and fiscal years already
+  retrieved. Only call a research tool again if the cached span is shorter than what the
+  question requires.
 
-{_SPAN_RULES}
+Tool-use rules:
+- Only call tools listed in runtime_context.available_tools.
+- Do not call a tool that has already been called with the same arguments.
+- Use scrape_web for qualitative context, recent events, and forward-looking information.
+  Do not use scrape_web for financial statement data that structured tools can retrieve.
+- Use equivalent tool calls for every company in a comparison.
+- Read each tool's description in available_tools for behavioral constraints before calling it.
+
+Span and period rules:
+- Tool span means the latest N annual fiscal periods.
+- If the user asks for specific years, use a span large enough to include them.
+- Do not use span=2 merely because the user mentioned two years.
+- Use consistent spans across tools for the same company unless otherwise instructed.
+- Default: latest period for factual questions; a reasonable recent span for trend questions.
 
 Cover: growth, profitability, liquidity, solvency, efficiency, cash flow quality, valuation
 (DCF), market context, and qualitative news/guidance. Skip a category only if clearly
@@ -310,13 +201,14 @@ than revenue; capex materially below depreciation; debt growth without earnings 
 growth; ROIC below WACC.
 """
 
-react_prompt = f"""
+react_prompt = """
 You are BABOON's react node.
 
 Check runtime_context.cached_data_catalog against the user's question in the conversation.
 Your job: call any tool needed to fill gaps, or output no tool calls when data is sufficient.
 
-{_DONT_PLAN}
+Do not answer the user. Do not analyze results. Do not summarize tool outputs.
+Do not invent financial data. Only call tools to gather information.
 
 Judge feedback — check first:
 If runtime_context.judge_rationale is present, the judge has already reviewed a draft response
@@ -343,10 +235,16 @@ Loop prevention — hard rules:
 - Do not call a tool with the same arguments as a previous call.
 - If the catalog covers the question, output no tool calls immediately.
 
-{_TOOL_USE_RULES}
+Tool-use rules:
+- Only call tools listed in runtime_context.available_tools.
+- Do not call a tool that has already been called with the same arguments.
+- Use scrape_web for qualitative context, recent events, and forward-looking information.
+  Do not use scrape_web for financial statement data that structured tools can retrieve.
+- Use equivalent tool calls for every company in a comparison.
+- Read each tool's description in available_tools for behavioral constraints before calling it.
 """
 
-deep_react_prompt = f"""
+deep_react_prompt = """
 You are BABOON's deep react node.
 
 Check runtime_context.cached_data_catalog against runtime_context.available_tools.
@@ -355,7 +253,8 @@ no tool calls when every dimension is satisfied.
 
 Note: the most recent tool results are in the message history. Review them before deciding.
 
-{_DONT_PLAN}
+Do not answer the user. Do not analyze results. Do not summarize tool outputs.
+Do not invent financial data. Only call tools to gather information.
 
 Evaluation rules:
 - Ask: what question does the available data leave unanswered? If a tool would answer it,
@@ -364,7 +263,26 @@ Evaluation rules:
   in another.
 - For any company comparison, every dimension must be covered for every company.
 
-{_STOP_GATE}
+Sufficiency check: for each dimension below, if data is absent for any company in scope and
+a tool covers it, call that tool. Skip only if clearly irrelevant to the company or question
+(e.g., efficiency ratios for a financial firm). If unsure, include it.
+
+Dimensions and the tools that cover them:
+- Profitability (margins, ROA, ROE, ROIC) → get_profitability_ratios
+- Liquidity (current, quick, cash ratios) → get_liquidity_ratios
+- Solvency (debt ratios, interest coverage) → get_solvency_ratios
+- Efficiency (DSO, DIO, DPO, CCC) → get_efficiency_ratios
+- Growth (YoY changes) → get_income_statement_growth_rates, get_balance_sheet_growth_rates
+- Valuation (DCF) → run_dcf_valuation
+- Market context (price, beta, risk-free rate) → get_market_data
+- Sector assumptions (ERP, terminal growth) → get_sector_data
+- Financial statement actuals → get_financials
+- Qualitative news and guidance → scrape_web (confirm scrape_history is non-empty)
+
+get_financials provides line items only — it does not compute ratios. Always call dedicated
+ratio tools independently.
+
+Output no tool calls only when every relevant dimension is satisfied for every company.
 """
 
 response_prompt = """
