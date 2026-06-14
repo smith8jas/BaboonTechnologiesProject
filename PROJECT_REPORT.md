@@ -9,10 +9,12 @@ Baboon Technologies is a full-stack public-company research and valuation platfo
 - SEC EDGAR ingestion and XBRL normalization for historical financial statements.
 - Yahoo Finance, FRED, and Damodaran data for market and valuation inputs.
 - Financial ratio, growth-rate, discounted cash flow (DCF), and comparable-company calculations.
-- A LangGraph agent that plans research, calls tools, caches data, optionally searches the web, and writes an investor-oriented response.
+- A LangGraph agent that routes requests, plans research, calls tools, caches data in a per-session DuckDB database, optionally searches the web, evaluates its own output through a judge node, and writes an investor-oriented response.
 - Supabase Auth and Postgres persistence for users, profiles, chat sessions, and messages.
 
-The repository contains a meaningful end-to-end product rather than a basic scaffold. Its strongest areas are the layered backend design, structured financial models, tool-backed agent, streaming user experience, and session persistence. Its main weaknesses are deployment-breaking import capitalization, stale tests and documentation, insufficient validation around DCF edge cases, and incomplete dependency reproducibility in the current local installation.
+The repository contains a meaningful end-to-end product rather than a basic scaffold. Its strongest areas are the layered backend design, structured financial models, multi-model tool-backed agent, streaming user experience, and session persistence. Its known weaknesses include dependency on stable external data structures (particularly EDGAR/edgartools), simplistic DCF assumptions, and underdeveloped edge case handling for certain financial statement adapters — all of which are documented in detail in the Caveats section.
+
+---
 
 ## 2. Product Purpose
 
@@ -27,7 +29,315 @@ The application is intended to let an authenticated user ask questions such as:
 
 The system answers through a conversational interface, using structured financial tools for quantitative claims and web research for qualitative or forward-looking context.
 
-## 3. Technology Stack
+---
+
+## 3. Setup
+
+### 3.1 Prerequisites
+
+- Python 3.11 or higher
+- [`uv`](https://docs.astral.sh/uv/) (Python package manager)
+- Node.js 18 or higher and npm
+
+### 3.2 API Keys Required
+
+Before running anything, obtain the following credentials:
+
+| Credential | How to Obtain | Required |
+|---|---|---|
+| `EDGAR_USER_AGENT` | Your own email address. The SEC requires a valid contact email in the User-Agent header by policy — no account or registration needed. | Yes |
+| `FRED_API_KEY` | Go to [fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html), create a free account, and request an API key from your account dashboard. | Yes |
+| `OPENAI_API_KEY` | Go to [platform.openai.com](https://platform.openai.com), create an account, add billing under Settings → Billing, then generate a key under API Keys. | Yes (recommended) |
+| `ANTHROPIC_API_KEY` | Go to [console.anthropic.com](https://console.anthropic.com), create an account, add a payment method, then generate a key under API Keys. | Yes (recommended) |
+| `GROQ_API_KEY` | Go to [console.groq.com](https://console.groq.com), create a free account, and generate a key under API Keys. Free tier available. | Yes (recommended) |
+| `XAI_API_KEY` | Go to [console.x.ai](https://console.x.ai), create an account, and generate a key. Compatibility with this codebase has not been fully verified — use with caution. | Optional |
+| `SUPABASE_URL` | Create a project at [supabase.com](https://supabase.com). The URL is found in Project Settings → API → Project URL. | Full app only |
+| `SUPABASE_ANON_KEY` | In the same Supabase project, go to Settings → API → `anon` public key. | Full app only |
+| `SUPABASE_SERVICE_ROLE_KEY` | In the same Supabase project, go to Settings → API → `service_role` secret key. Keep this private and never expose it client-side. | Full app only |
+
+**Confirmed compatible LLM providers:**
+
+| Provider | Env Variable | Default node(s) | Notes |
+|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | router, plan, react, judge | Confirmed working. Used for structured-output nodes (routing, planning, tool selection, judging). |
+| `anthropic` | `ANTHROPIC_API_KEY` | response | Confirmed working. Used for the reasoning-heavy response node — synthesizing all gathered data into the final investor analysis. Supports prompt caching. At the current scale, Anthropic models offer the best cost-to-reasoning-quality ratio for this task. |
+| `groq` | `GROQ_API_KEY` | scrape | Confirmed working. Very fast and cheap; good for high-throughput or low-latency nodes. |
+| `xai` | `XAI_API_KEY` | — | Not fully verified. May require additional LangChain configuration. |
+
+Other providers listed in the `.env` comments (Google, Mistral, Cohere, Fireworks, Together, Ollama, HuggingFace, Bedrock) are supported by LangChain's `init_chat_model` interface in principle, but **have not been tested with this codebase**. Using them may require verifying that structured output via function calling works correctly for that provider, and that the model follows multi-step prompt instructions reliably. Do not assume compatibility without testing.
+
+### 3.3 Folder Structure Clarification
+
+The project contains two nested folders both named `backend`:
+
+```
+BaboonTechnologiesProject/
+└── backend/                  ← OUTER backend — run commands from here, .env goes here
+    ├── .env                  ← YOUR SECRETS FILE (create this)
+    ├── pyproject.toml
+    ├── uv.lock
+    └── src/
+        └── backend/          ← INNER backend — Python source code package
+            ├── main.py
+            ├── core/
+            │   └── llm.py
+            └── agent/
+                └── ...
+```
+
+- The **outer** `backend/` folder is where you run `uv sync`, `uv run ...`, and where the `.env` file must be placed.
+- The **inner** `backend/` folder (`backend/src/backend/`) is the Python package. You never place `.env` here and you do not run commands from here.
+
+### 3.4 Creating the .env File
+
+Create a file named `.env` directly inside the **outer** `backend/` folder — that is, at `BaboonTechnologiesProject/backend/.env` (the same directory as `pyproject.toml`). Use the following template:
+
+```env
+APP_NAME="Baboon Technologies API"
+ENVIRONMENT="development"
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+# SEC EDGAR — use your own email address
+EDGAR_USER_AGENT=your_email@domain.com
+
+# FRED (Federal Reserve Economic Data)
+FRED_API_KEY=your_fred_key_here
+
+# Supabase (required for full app with auth and chat persistence)
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_ANON_KEY=your_anon_key_here
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+
+# LLM keys — include only those you intend to use
+OPENAI_API_KEY=your_openai_key_here
+ANTHROPIC_API_KEY=your_anthropic_key_here
+GROQ_API_KEY=your_groq_key_here
+
+# Per-node model allocation — each agent node can use a different provider/model
+ROUTER_LLM_PROVIDER=openai
+ROUTER_LLM_MODEL=gpt-4.1
+
+PLAN_LLM_PROVIDER=openai
+PLAN_LLM_MODEL=gpt-4.1
+
+REACT_LLM_PROVIDER=openai
+REACT_LLM_MODEL=gpt-4.1
+
+RESPONSE_LLM_PROVIDER=anthropic
+RESPONSE_LLM_MODEL=claude-haiku-4-5-20251001
+
+JUDGE_LLM_PROVIDER=openai
+JUDGE_LLM_MODEL=gpt-4o-mini
+
+SCRAPE_LLM_PROVIDER=groq
+SCRAPE_LLM_MODEL=llama-3.3-70b-versatile
+
+# Uncomment and increase if using large models such as Claude Opus or GPT-4 with long outputs
+# LLM_MAX_TOKENS=16000
+
+# LangSmith (optional — for tracing)
+LANGSMITH_TRACING=false
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=your_langsmith_key
+LANGSMITH_PROJECT="baboon-financial-analyst"
+```
+
+### 3.5 Running the Full Application
+
+**Backend:**
+
+```bash
+cd backend
+uv sync
+uv run uvicorn backend.main:app --reload
+```
+
+**Frontend** (open a new terminal):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend will be available at `http://localhost:5173`. It expects the backend at the URL configured in its `.env` (default `http://localhost:8000`).
+
+### 3.6 Testing the Agent in the Terminal (Without Frontend)
+
+To test the agent directly from the terminal without running the full application:
+
+```bash
+cd backend
+uv run python src/backend/agent/main.py
+```
+
+The file being run is the outer `backend/src/backend/agent/main.py` — not any other `main.py` in the project. This is the CLI entry point for the agent, distinct from `backend/src/backend/main.py` which is the FastAPI application entry point.
+
+This launches a CLI chatbot loop. Type any financial question and press Enter. Type `exit` to quit. The agent prints its response and a snapshot of the message history after each turn.
+
+### 3.7 Switching LLM Providers or Models
+
+Each agent node uses a separate model. The assignment is controlled in two places:
+
+**Option A — via `.env` (no code change required, recommended):**
+
+Each node reads its provider and model from environment variables at startup. The naming pattern is `{NODE}_LLM_PROVIDER` and `{NODE}_LLM_MODEL`. The six nodes are: `ROUTER`, `PLAN`, `REACT`, `RESPONSE`, `JUDGE`, `SCRAPE`.
+
+```env
+# Example: move the response node from Anthropic to OpenAI
+RESPONSE_LLM_PROVIDER=openai
+RESPONSE_LLM_MODEL=gpt-4o
+
+# Example: move the scrape node from Groq to Anthropic
+SCRAPE_LLM_PROVIDER=anthropic
+SCRAPE_LLM_MODEL=claude-haiku-4-5-20251001
+```
+
+Restart the backend after changing `.env`. Models are initialized at import time in `core/llm.py` — changes take effect only after a restart.
+
+**Option B — via `backend/src/backend/core/llm.py` (change the hardcoded defaults):**
+
+The file `core/llm.py` defines `_NODE_DEFAULTS`, a dictionary that maps each node to its default provider and model. These defaults are used when the corresponding env vars are absent:
+
+```python
+_NODE_DEFAULTS: dict[str, tuple[str, str]] = {
+    "router":   ("openai",    "gpt-4.1"),
+    "plan":     ("openai",    "gpt-4.1"),
+    "react":    ("openai",    "gpt-4.1"),
+    "response": ("anthropic", "claude-haiku-4-5-20251001"),
+    "judge":    ("openai",    "gpt-4o-mini"),
+    "scrape":   ("groq",      "llama-3.3-70b-versatile"),
+}
+```
+
+Change any entry here to permanently alter the default for that node. For example, to make Anthropic Claude the default for planning:
+
+```python
+"plan": ("anthropic", "claude-sonnet-4-6"),
+```
+
+The `model_provider` string passed to LangChain's `init_chat_model` must match exactly the provider name that LangChain recognizes. For confirmed providers these are `"openai"`, `"anthropic"`, and `"groq"`. Providing an unrecognized provider string will raise an error at startup.
+
+**Important note on `LLM_MAX_TOKENS`:**
+
+The `LLM_MAX_TOKENS` env variable is applied globally to every node. If you switch a node to a larger model capable of long outputs (e.g., Claude Opus, GPT-4 with extended context), uncomment and set this variable in `.env`:
+
+```env
+LLM_MAX_TOKENS=16000
+```
+
+Without it, large models may truncate their response mid-sentence at the provider's default output limit.
+
+---
+
+## 4. Repository Structure
+
+```text
+BaboonTechnologiesProject/
+├── backend/
+│   ├── .env                          Secrets and configuration (not committed)
+│   ├── pyproject.toml                Python package and dependencies (uv)
+│   ├── uv.lock                       Locked Python dependency graph
+│   └── src/backend/
+│       ├── main.py                   FastAPI application entry point
+│       ├── core/
+│       │   ├── config.py             Pydantic Settings — reads .env
+│       │   └── llm.py                Per-node LangChain model initialization
+│       ├── api/
+│       │   ├── routes.py             HTTP endpoint registration
+│       │   ├── schemas.py            Pydantic request/response schemas
+│       │   └── controllers/
+│       │       ├── agent.py          Agent and streaming route handlers
+│       │       ├── chats.py          Chat session and message handlers
+│       │       └── companies.py      Financial data endpoint handlers
+│       ├── auth/
+│       │   └── dependencies.py       Supabase bearer token verification
+│       ├── db/
+│       │   └── supabase.py           Supabase service-role REST client
+│       ├── repositories/
+│       │   └── chats.py              Chat session and message persistence
+│       ├── adapters/
+│       │   ├── edgar.py              SEC EDGAR XBRL wrapper
+│       │   ├── yahoo_finance.py      Price, beta, shares, market cap
+│       │   ├── fred.py               10-year Treasury yield (DGS10)
+│       │   └── damodaran.py          NYU Stern Excel ERP and sector multiples
+│       ├── processing/
+│       │   ├── schema.py             Pydantic financial models and validators
+│       │   └── xbrl_map.py           ~285 XBRL concept-to-field mappings
+│       ├── services/
+│       │   ├── financials.py         EDGAR ETL orchestrator with LRU cache
+│       │   ├── growth.py             Year-over-year growth rate calculations
+│       │   ├── ratio.py              Liquidity, solvency, profitability, efficiency ratios
+│       │   ├── dcf_engine.py         Discounted cash flow valuation engine
+│       │   ├── comparables.py        Peer and Damodaran comparable valuation
+│       │   ├── scrape.py             DuckDuckGo search and async page scraping
+│       │   └── agent_service.py      Agent invocation entry points for the API
+│       ├── agent/
+│       │   ├── main.py               CLI chatbot loop for terminal testing
+│       │   ├── graph.py              LangGraph state machine (wires nodes and edges)
+│       │   ├── state.py              AgentState TypedDict
+│       │   ├── llm.py                LLM invocation helpers with Anthropic prompt caching
+│       │   ├── prompts.py            System prompts for every node
+│       │   ├── runtime.py            activate_agent_async entry points
+│       │   ├── constants.py          RECURSION_LIMIT, REACT_LIMIT, JUDGE_LIMIT
+│       │   ├── messages.py           Message history helpers
+│       │   ├── nodes/
+│       │   │   ├── router.py         Router node
+│       │   │   ├── plan.py           Plan node
+│       │   │   ├── tools.py          Tools node (concurrent execution)
+│       │   │   ├── scrape.py         Scrape node (async web research)
+│       │   │   ├── react.py          React node (tool result evaluation)
+│       │   │   ├── response.py       Response node (final answer composition)
+│       │   │   └── judge.py          Judge node (response quality evaluation)
+│       │   ├── edges/
+│       │   │   ├── after_router.py   Routes to plan_node or END
+│       │   │   ├── after_plan.py     Routes to tools, scrape, or response
+│       │   │   ├── after_react.py    Routes to tools, scrape, or response
+│       │   │   └── after_judge.py    Routes to END or back to react (revise)
+│       │   ├── tools/
+│       │   │   ├── research.py       get_financials, get_market_data, get_sector_data, scrape_web
+│       │   │   ├── calculation.py    Growth, ratio, DCF, and comps tools
+│       │   │   ├── base.py           Shared tool helpers (log_cache_status)
+│       │   │   └── registry.py       Tool registry (TOOLS_BY_NAME dict)
+│       │   ├── cache/
+│       │   │   ├── session.py        DuckDB session lifecycle and schema DDL
+│       │   │   ├── financials.py     FinancialsCache
+│       │   │   ├── market_data.py    MarketDataCache
+│       │   │   ├── sector_data.py    SectorDataCache
+│       │   │   ├── growth.py         GrowthCache
+│       │   │   ├── ratios.py         RatiosCache
+│       │   │   ├── dcf.py            DCFCache
+│       │   │   ├── comparables.py    CompsCache
+│       │   │   ├── catalog.py        build_data_catalog and build_data_payload
+│       │   │   ├── base.py           CacheHelpers base class, serialization
+│       │   │   └── schema.py         Cache key constants and subdomain labels
+│       │   └── streaming/
+│       │       ├── events.py         Streaming event type definitions
+│       │       └── stream.py         NDJSON streaming helpers
+│       └── scripts/                  CLI utilities and experimental code
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx                   Main client state and routing
+│   │   ├── api/client.js             Backend API and NDJSON streaming client
+│   │   ├── auth/                     Supabase client and auth provider
+│   │   ├── pages/                    Landing, auth, chat, and profile screens
+│   │   ├── components/               Shared UI components
+│   │   ├── utils/reportExport.js     HTML/PDF-style report export
+│   │   └── styles.css                Application styling (light/dark themes)
+│   ├── package.json
+│   └── vercel.json
+├── render.yaml                       Render backend deployment config
+├── ARCHITECTURE.md
+├── AGENTIC.md
+├── DEPLOYMENT.md
+├── README.md
+├── Backend_agent_behavior_tests_.docx
+└── PROJECT_REPORT.md
+```
+
+---
+
+## 5. Technology Stack
 
 ### Frontend
 
@@ -44,12 +354,13 @@ The system answers through a conversational interface, using structured financia
 - FastAPI and Uvicorn
 - Pydantic v2 and pydantic-settings
 - LangChain and LangGraph
-- OpenAI or another configured LangChain chat-model provider
-- pandas and NumPy
-- edgartools
+- Multiple LLM providers supported via LangChain (OpenAI, Anthropic, Groq, Google, etc.)
+- DuckDB (per-session in-memory/temp-file agent cache)
+- pandas
+- edgartools (SEC EDGAR XBRL ingestion)
 - yfinance
-- FRED API
-- DuckDuckGo search, httpx, and Scrapy selectors
+- FRED API via `requests`
+- DuckDuckGo search, httpx, and Scrapy selectors (web scraping)
 
 ### Persistence and Hosting
 
@@ -58,48 +369,11 @@ The system answers through a conversational interface, using structured financia
 - Render configuration for the backend
 - Vercel configuration for the frontend
 
-## 4. Repository Structure
+---
 
-```text
-.
-|-- backend/
-|   |-- src/backend/
-|   |   |-- main.py                 FastAPI application
-|   |   |-- api/                    Routes, transport schemas, controllers
-|   |   |-- auth/                   Supabase token verification
-|   |   |-- db/                     Supabase service-role REST client
-|   |   |-- repositories/           Profile and chat persistence
-|   |   |-- adapters/               External financial-data clients
-|   |   |-- processing/             XBRL mappings and Pydantic models
-|   |   |-- services/               Financial calculations and orchestration
-|   |   |-- Agent/                  LangGraph agent, tools, cache, prompts
-|   |   |-- scripts/                Experimental and CLI utilities
-|   |   `-- data/sic.csv            SIC-to-industry mapping
-|   |-- supabase/migrations/         Database schema and profile changes
-|   |-- tests/                       Backend tests
-|   |-- pyproject.toml               Python package and dependencies
-|   `-- uv.lock                      Locked Python dependency graph
-|-- frontend/
-|   |-- src/
-|   |   |-- App.jsx                 Main client state and routing
-|   |   |-- api/client.js           Backend API and NDJSON streaming client
-|   |   |-- auth/                   Supabase client and auth provider
-|   |   |-- pages/                  Landing, auth, chat, and profile screens
-|   |   |-- components/             Shared UI components
-|   |   |-- utils/reportExport.js   HTML/PDF-style report export
-|   |   `-- styles.css              Application styling
-|   |-- package.json
-|   `-- vercel.json
-|-- render.yaml
-|-- README.md
-|-- ARCHITECTURE.md
-|-- AGENTIC.md
-`-- DEPLOYMENT.md
-```
+## 6. Backend Architecture
 
-## 5. Backend Architecture
-
-The backend follows a mostly clean layered design:
+The backend follows a layered design:
 
 ```text
 HTTP route
@@ -118,22 +392,15 @@ HTTP route
 - Configures CORS from `CORS_ORIGINS`.
 - Includes the central API router.
 
-The module imports all routes during startup. Because agent routes eventually initialize modules that depend on LLM configuration, environment correctness is important even when only non-agent endpoints are needed.
-
 ### Configuration and LLM
 
-`core/config.py` defines required settings for:
+`core/config.py` defines required settings via Pydantic Settings reading from `backend/.env`.
 
-- EDGAR identity
-- FRED API key
-- OpenAI API key
-- LLM provider and model
-- Supabase URL and keys
-- CORS origins
+`core/llm.py` initializes one LangChain chat model per agent node, using the `ROUTER_LLM_PROVIDER` / `ROUTER_LLM_MODEL` naming pattern. This allows each node (router, plan, react, response, judge, scrape) to use a different model and provider simultaneously.
 
-`core/llm.py` uses LangChain's `init_chat_model()` with temperature zero. A global `CHAT_MODEL` is built at import time.
+---
 
-## 6. API Layer
+## 7. API Layer
 
 ### Public Financial Endpoints
 
@@ -146,7 +413,7 @@ The module imports all routes during startup. Because agent routes eventually in
 - `GET /companies/{ticker}/dcf`
 - `GET /sector-data`
 
-Ticker inputs are normalized to uppercase in the company controller. Query parameters constrain spans and years.
+Ticker inputs are normalized to uppercase in the company controller.
 
 ### Authenticated Endpoints
 
@@ -164,40 +431,19 @@ The API verifies a Supabase bearer token before allowing agent, profile, or chat
 
 ### Error Handling
 
-Routes normalize controller errors:
+Routes normalize controller errors: `ValueError` becomes HTTP 400, other errors become HTTP 502, existing `HTTPException` values are preserved, and streaming errors are emitted as NDJSON `error` events.
 
-- `ValueError` becomes HTTP 400.
-- Other service errors generally become HTTP 502.
-- Existing `HTTPException` values are preserved.
-- Streaming errors are emitted as NDJSON `error` events.
+---
 
-## 7. External Data Adapters
+## 8. External Data Adapters
 
 ### SEC EDGAR
 
-`adapters/edgar.py` subclasses `edgar.Company`.
-
-It:
-
-- Sets the SEC-required identity from configuration.
-- Fetches recent non-amended 10-K filings.
-- Builds combined XBRL data for the requested span.
-- Filters facts by statement type.
-- Removes abstract facts.
-- Deduplicates concept/period pairs, preferring totals and higher-level entries.
-- Returns period-first dictionaries.
-- Extracts company metadata including CIK, SIC, industry, fiscal-year end, state, website, and phone.
+`adapters/edgar.py` subclasses `edgar.Company` from the `edgartools` library. It fetches recent non-amended 10-K filings, builds combined XBRL data for the requested span, filters facts by statement type, removes abstract facts, deduplicates concept/period pairs (preferring totals and higher-level entries), and returns period-first dictionaries. It also extracts company metadata including CIK, SIC, industry, fiscal-year end, state, website, and phone.
 
 ### Yahoo Finance
 
-`adapters/yahoo_finance.py` obtains:
-
-- Current price
-- Beta
-- Shares outstanding
-- Market capitalization
-
-It wraps failures in `ValueError`.
+`adapters/yahoo_finance.py` obtains current price, beta, shares outstanding, and market capitalization via `yfinance`.
 
 ### FRED
 
@@ -205,531 +451,736 @@ It wraps failures in `ValueError`.
 
 ### Damodaran
 
-`adapters/damodaran.py` reads NYU Stern Excel datasets for:
+`adapters/damodaran.py` reads NYU Stern Excel datasets for implied equity risk premium, industry trailing P/E, EV/Sales, and Price/Sales. The loaded tables are cached in memory.
 
-- Implied equity risk premium
-- Industry trailing P/E
-- Industry EV/Sales
-- Industry Price/Sales
+---
 
-The loaded tables are cached in memory.
-
-## 8. Financial Data Processing
+## 9. Financial Data Processing
 
 ### XBRL Mapping
 
-`processing/xbrl_map.py` maps the many possible SEC concept names into a compact internal schema. Separate mappings cover:
-
-- Income statement
-- Balance sheet
-- Cash flow statement
-- Per-share data
-
-Alternative concepts are ordered so the mapper can select the first available representation. This is essential because companies frequently use different accepted XBRL concepts for economically similar values.
+`processing/xbrl_map.py` maps approximately 285 SEC XBRL concept names into a compact internal schema across four mappings: income statement, balance sheet, cash flow statement, and per-share data. Alternative concepts are ordered so the mapper can select the first available representation — essential because companies frequently use different accepted XBRL concepts for economically similar values.
 
 ### Pydantic Models
 
-`processing/schema.py` defines the domain model:
+`processing/schema.py` defines the domain model: `CompanyMetadata`, `PerShare`, `IncomeStatement`, `BalanceSheet`, `CashFlowStatement`, `MarketData`, `SectorData`, `FinancialPeriod`, `HistoricalFinancials`, `ValuationInputs`, `Assumptions`, and `DCFOutput`.
 
-- `CompanyMetadata`
-- `PerShare`
-- `IncomeStatement`
-- `BalanceSheet`
-- `CashFlowStatement`
-- `MarketData`
-- `SectorData`
-- `FinancialPeriod`
-- `HistoricalFinancials`
-- `ValuationInputs`
-- `Assumptions`
-- `DCFOutput`
-
-Important computed fields include:
-
-- EBIAT = EBIT - tax expense
-- EBITDA = EBIT + depreciation expense
-- Net working capital = current assets - current liabilities
-- Free cash flow = CFO - CapEx
-- Cost of equity = risk-free rate + beta x equity risk premium
-- WACC from equity and debt weights
+Important computed fields include EBIAT, EBITDA, net working capital, free cash flow, cost of equity (CAPM), and WACC.
 
 Validation favors warning and fallback behavior instead of rejecting imperfect filings. Examples include gross-profit reconciliation, tax-rate sanity, balance-sheet identity, and net-income reconciliation.
 
-`HistoricalFinancials.to_dataframe()` converts a selected statement into a period-indexed pandas DataFrame.
+---
 
-## 9. Financial Services
+## 10. Financial Services
 
 ### Financial ETL
 
-`services/financials.py` performs:
-
-1. EDGAR fetch.
-2. XBRL concept mapping.
-3. Per-period Pydantic model construction.
-4. Fiscal-period sorting.
-5. HistoricalFinancials assembly.
-
-It also offers an in-process 128-entry LRU-style financials cache with a lock per ticker/span so concurrent identical requests do not duplicate EDGAR work.
-
-Market data combines Yahoo data with the optional FRED rate. Sector data currently combines Damodaran ERP with a default 2.5% long-term growth rate from the schema.
+`services/financials.py` orchestrates EDGAR fetch → XBRL mapping → Pydantic model construction → period sorting → `HistoricalFinancials` assembly. It also maintains a 128-entry in-process LRU cache with per-ticker/span locks.
 
 ### Growth Rates
 
-`services/growth.py` calculates year-over-year changes:
-
-```text
-(current - previous) / abs(previous)
-```
-
-The first period is returned with null growth values. Both income-statement and balance-sheet fields are covered.
+`services/growth.py` calculates year-over-year changes: `(current - previous) / abs(previous)`. The first period returns null growth values.
 
 ### Ratios
 
-`services/ratio.py` calculates:
-
-- Liquidity: current, quick, and cash ratios.
-- Solvency: liabilities/equity, liabilities/assets, and interest coverage.
-- Profitability: gross margin, EBIT margin, and net margin.
-- Efficiency: DSO, DIO, and DPO.
-
-Results are grouped by fiscal year. Zero denominators generally return `None`.
+`services/ratio.py` calculates liquidity (current, quick, cash), solvency (liabilities/equity, liabilities/assets, interest coverage), profitability (gross margin, EBIT margin, net margin), and efficiency (DSO, DIO, DPO) ratios. Zero denominators return `None`.
 
 ### Comparable-Company Valuation
 
-`services/comparables.py` supports:
+`services/comparables.py` supports peer median P/E, EV/EBITDA, EV/Sales, P/S, and P/B, as well as Damodaran industry fallback based on SIC. Returns a low/mean/high valuation band, never a single-point estimate.
 
-- Peer median P/E, EV/EBITDA, EV/Sales, P/S, and P/B.
-- Implied target values per share.
-- Low, mean, and high valuation bands.
-- Damodaran industry fallback based on SIC.
-- Special notes for financial-sector companies.
+---
 
-This service is exposed to the agent but not through a dedicated REST endpoint. It is newer and less integrated than the DCF path.
-
-## 10. DCF Engine
+## 11. DCF Engine
 
 `services/dcf_engine.py` implements the project's main intrinsic valuation model.
 
-### Historical Assumptions
-
-`build_assumptions()` averages historical:
-
-- Revenue growth
-- EBIT margin
-- Effective tax rate
-- D&A as a percentage of revenue
-- CapEx as a percentage of revenue
-- Net working capital as a percentage of revenue
-
-The tax rate is constrained to 0%-60%. Missing values usually fall back to zero, except tax, which defaults to 21%.
-
-### Valuation Inputs
-
-`build_valuation_inputs()` calculates debt and cost of debt.
-
-Cost-of-debt hierarchy:
-
-1. Income-statement interest expense / long-term debt.
-2. Cash-flow interest expense / long-term debt.
-3. EBIT - net income - tax expense, divided by long-term debt.
-4. Risk-free rate + 1.5% fallback.
-
-CAPM cost of equity:
-
-```text
-risk-free rate + beta x equity risk premium
-```
-
-WACC:
-
-```text
-equity weight x cost of equity
-+ debt weight x cost of debt x (1 - tax rate)
-```
-
-### Projection and Valuation
+`build_assumptions()` averages historical revenue growth, EBIT margin, effective tax rate, D&A as a percentage of revenue, CapEx as a percentage of revenue, and net working capital as a percentage of revenue.
 
 `run_dcf()`:
-
-1. Projects revenue for five years using constant growth.
-2. Applies a constant EBIT margin.
+1. Projects revenue for five years using constant historical growth.
+2. Applies a constant EBIT margin to derive EBIT.
 3. Calculates tax and EBIAT.
 4. Projects D&A and CapEx as percentages of revenue.
 5. Calculates changes in net working capital.
-6. Calculates UFCF:
-
-```text
-EBIAT + D&A - CapEx - change in NWC
-```
-
+6. Calculates unlevered free cash flow (UFCF = EBIAT + D&A − CapEx − ΔNWC).
 7. Discounts annual UFCF at WACC.
-8. Calculates Gordon Growth terminal value:
-
-```text
-final-year UFCF x (1 + g) / (WACC - g)
-```
-
+8. Calculates Gordon Growth terminal value: `UFCF_final × (1 + g) / (WACC − g)`.
 9. Adds discounted terminal value to discounted forecast cash flows.
 10. Subtracts debt to reach equity value.
 11. Divides by shares outstanding for intrinsic value per share.
 
 The output includes detailed projections, discount factors, enterprise value, terminal value, terminal-value concentration, and fallback flags.
 
-## 11. Agent Architecture
+---
 
-The live agent code is in `backend/src/backend/Agent/`, although imports use `backend.agent`.
+## 12. LangGraph Process
+
+The agent is built as a LangGraph state machine. The compiled graph has seven nodes connected by conditional edges. Each node is an async function that reads from `AgentState`, calls an LLM or tool, and returns a partial state update.
+
+### Graph Diagram
+
+```
+START
+  │
+  ▼
+router ──────────────────────────────────────────────────────► END (direct answer)
+  │
+  ▼ (route = plan_node)
+plan_node
+  │
+  ├──► tools ──────────────────────────────────────────────► react_node
+  │                                                               │
+  ├──► scrape_node ─────────────────────────────────────────► react_node
+  │                                                               │
+  ├──► tools + scrape_node (parallel) ────────────────────► react_node
+  │                                                               │
+  └──► response_node ◄────────────────────────────────────────── │
+            │                                              ├──► tools
+            ▼                                              ├──► scrape_node
+         judge_node                                        └──► response_node
+            │
+            ├──► END (verdict = end)
+            │
+            └──► react_node (verdict = revise)
+```
+
+### Node Descriptions
+
+**Router Node** (`nodes/router.py`)
+
+The entry point for every user turn. It invokes the LLM with a structured output (`RouterDecision`) to decide between two paths: `end` (answer directly from context, no tools needed) or `plan_node` (financial analysis required). It also decides whether the request warrants a `Deep_Plan` (comprehensive multi-tool analysis) or a standard plan. Out-of-scope questions receive a direct redirect response here without ever entering the planning flow. The router also manages the per-session query cycle counter and triggers cache purge every 5 cycles.
+
+**Plan Node** (`nodes/plan.py`)
+
+Generates the initial tool-call batch. The LLM fills a `PlanDecision` structure containing a rationale and a list of `ToolCallSpec` entries. It selects from the available tools registered in `TOOLS_BY_NAME` and uses the appropriate system prompt (`plan_prompt` for standard, `deep_plan_prompt` for deep analysis). Based on whether tool calls include `scrape_web`, non-scrape tools, or both, it sets `plan_status` so the conditional edge routes to the correct node(s).
+
+**Tools Node** (`nodes/tools.py`)
+
+Executes all non-scrape tool calls from the plan message. Calls are grouped by ticker; groups run concurrently via `asyncio.gather` while calls within the same ticker group run sequentially to avoid DuckDB write conflicts. Each tool receives the `session_id` injected at call time, opens its own DuckDB connection, writes results, and closes the connection. After all tools finish, the node reads back a compact data catalog from DuckDB and stores it in state.
+
+**Scrape Node** (`nodes/scrape.py`)
+
+Handles `scrape_web` tool calls. For each scrape call, an LLM generates a `ScrapeDecision` with multiple targeted search queries, a research goal, preferred source types, and URLs to avoid. Each query runs `search_and_scrape_async` concurrently. Results are deduplicated by URL, ranked by confidence, and the top results are returned as a `ToolMessage`. High-confidence entries are also appended to `scrape_history` in state for the react and response nodes to read.
+
+**React Node** (`nodes/react.py`)
+
+Evaluates tool results and decides whether the data gathered so far is sufficient or whether additional tool calls are needed. It operates under a recursion budget (`REACT_LIMIT`, derived from `RECURSION_LIMIT`). If near the limit, it forces the process toward `response_node` to prevent infinite loops. When coming from a judge revision, it receives the judge's critique and the prior response to understand what gaps to address. It outputs another `ReactDecision` with optional additional tool calls or signals readiness to respond.
+
+**Response Node** (`nodes/response.py`)
+
+Composes the final user-facing answer. It opens the DuckDB session and calls `build_data_payload` to retrieve all cached data (financials, market data, growth, ratios, DCF, comparables, sector data) as a structured dictionary. This payload, together with the plan rationale and any judge critique (in revision mode), is injected into the LLM's system prompt. The LLM generates the final Markdown analysis. The response is stored in `current_response` in state so the judge can evaluate it.
+
+**Judge Node** (`nodes/judge.py`)
+
+Evaluates the response produced by `response_node` against the original user question. It operates under a `JUDGE_LIMIT` budget. The LLM fills a `JudgeDecision` with a verdict of either `end` (response is adequate) or `revise` (response has gaps). On `revise`, the edge routes back to `react_node`, and if `react_node` is near its own limit, the judge extends that limit by one iteration. On `end`, the response is re-appended to the message history as the final output.
+
+### Conditional Edges
+
+| Edge Source | Condition | Destination |
+|---|---|---|
+| `router` | `route == "plan_node"` | `plan_node` |
+| `router` | `route == "end"` | END |
+| `plan_node` | `needs_scrape_and_tools` | `tools` + `scrape_node` (parallel via `Send`) |
+| `plan_node` | `needs_tools` | `tools` |
+| `plan_node` | `needs_scrape` | `scrape_node` |
+| `plan_node` | `ready_to_respond` | `response_node` |
+| `tools` / `scrape_node` | (always) | `react_node` |
+| `react_node` | `needs_tools` | `tools` |
+| `react_node` | `needs_scrape` | `scrape_node` |
+| `react_node` | `ready_to_respond` | `response_node` |
+| `response_node` | (always) | `judge_node` |
+| `judge_node` | `verdict == "end"` | END |
+| `judge_node` | `verdict == "revise"` | `react_node` |
+
+---
+
+## 13. Data Flow
+
+This section traces how values travel from external sources through the cache layer and into the final response.
+
+### Step 1 — Adapters: External Data Ingestion
+
+When a research tool is called (e.g., `get_financials("AAPL", span=5)`), the corresponding cache module checks the DuckDB session first. On a cache miss, it calls the adapter layer:
+
+- **SEC EDGAR** (`adapters/edgar.py`): fetches the last N 10-K XBRL filings for the ticker. Returns raw `{period_end: {xbrl_concept: value}}` dictionaries for each statement type.
+- **Yahoo Finance** (`adapters/yahoo_finance.py`): fetches current price, beta, shares outstanding, market cap.
+- **FRED** (`adapters/fred.py`): fetches the DGS10 10-year Treasury yield; result is cached in the process for the server lifetime.
+- **Damodaran** (`adapters/damodaran.py`): loads NYU Stern Excel files for equity risk premium and sector multiples; results are cached in the process.
+
+### Step 2 — XBRL Mapping and Schema Validation
+
+Raw EDGAR XBRL concept names are translated by `processing/xbrl_map.py` into compact internal field names using four mapping dictionaries (~285 concepts total). The normalized dictionaries are then passed to `processing/schema.py`, which constructs typed Pydantic models (`IncomeStatement`, `BalanceSheet`, `CashFlowStatement`, `PerShare`) for each fiscal period. Computed fields (EBIAT, EBITDA, FCF, NWC, WACC) are evaluated at construction time. Validators emit warnings rather than raising errors to tolerate imperfect filings.
+
+### Step 3 — Services: Orchestration and Calculation
+
+For raw data fetching:
+- `services/financials.py` orchestrates EDGAR → XBRL mapping → Pydantic → `HistoricalFinancials`.
+- `services/financials.py:get_market_data()` combines Yahoo and FRED.
+- `services/financials.py:get_sector_data()` wraps Damodaran ERP and growth rate.
+
+For derived calculations:
+- `services/growth.py` computes year-over-year growth from `HistoricalFinancials`.
+- `services/ratio.py` computes liquidity, solvency, profitability, and efficiency ratios.
+- `services/dcf_engine.py` runs the full DCF from `HistoricalFinancials` + `MarketData` + `SectorData`.
+- `services/comparables.py` computes peer or Damodaran-based valuation bands.
+
+### Step 4 — DuckDB Cache: Per-Session Structured Storage
+
+Every tool call opens a connection to the session's DuckDB file (a temporary file keyed by the LangGraph `thread_id`). The schema is derived automatically from the Pydantic models in `processing/schema.py` so columns stay in sync with the models.
+
+Tables:
+- `companies` — one row per ticker (metadata).
+- `financials` — one row per `(ticker, fiscal_year)` — all statement fields flattened.
+- `market_data` — one row per ticker (current snapshot).
+- `sector_data` — one row per year (global Damodaran data).
+- `growth_rates` — one row per `(ticker, statement)` with JSON payload.
+- `ratios` — one row per `(ticker, ratio_type)` with JSON payload.
+- `dcf` — one row per `(ticker, scenario)` with JSON payload.
+- `comparables` — one row per `(ticker, method)` with JSON payload.
+
+Each row carries a `cycle` integer (incremented by the router each turn) so `purge_old_data()` can delete stale rows based on configurable thresholds every 5 cycles: calculated data is purged aggressively (keep last 2 cycles), external searched data is retained longer (keep last 3 cycles).
+
+### Step 5 — Data Catalog vs. Data Payload
+
+Two functions in `cache/catalog.py` serve different consumers:
+
+- `build_data_catalog(conn)` — produces a compact availability summary (which tickers have which data types, with coverage metadata). This is stored in `AgentState.data_catalog` and fed to the react and router nodes so they can see what data is already available without reading the full values.
+- `build_data_payload(conn)` — produces the full detailed data for every ticker and all computed results. This is only called by `response_node`, which passes it to the LLM as `gathered_data` in the system prompt.
+
+### Step 6 — Response Generation
+
+The response node injects the full `build_data_payload` output into the LLM's context. The LLM synthesizes the structured data — multi-year financial statements, growth rates, ratios, DCF projections, and web research snippets — into a coherent investor-oriented Markdown response. The response is then evaluated by the judge node and, if approved, returned to the user.
+
+### Data Flow Summary
+
+```
+External APIs (EDGAR, Yahoo, FRED, Damodaran, DuckDuckGo)
+    │
+    ▼  adapters/
+Raw data (XBRL concepts, prices, rates, scraped text)
+    │
+    ▼  processing/ (XBRL mapping + Pydantic schema)
+Validated HistoricalFinancials, MarketData, SectorData
+    │
+    ▼  services/ (ETL, growth, ratios, DCF, comps)
+Derived calculations (growth rates, ratios, DCF output, comp bands)
+    │
+    ▼  agent/cache/ (DuckDB per-session tables)
+Structured cache (companies, financials, market_data, growth_rates, ratios, dcf, comparables)
+    │
+    ├──► build_data_catalog ──► AgentState.data_catalog ──► react_node / router
+    │                                                        (compact availability check)
+    │
+    └──► build_data_payload ──► response_node ──► LLM ──► Final Markdown response ──► User
+                                (full data dump)
+```
+
+---
+
+## 14. Agent Architecture Details
 
 ### State
 
-`AgentState` contains:
+`AgentState` (`agent/state.py`) contains:
 
-- Append-only message history
-- Static application context
-- Current year
-- Serialized tool catalogue
-- Router and plan status
-- Plan/react iteration counts
-- Recursion fallback state
-- Structured data cache
-- Prompt-visible cache catalogue
-- Web scrape history
-- Planning guidance
-- Previous depth selection
-
-### Graph
-
-The compiled graph uses a LangGraph `MemorySaver`:
-
-```text
-START
-  -> router
-     -> END for direct answers
-     -> plan_node
-        -> tools and/or scrape_node
-           -> react_node
-              -> more tools/scraping
-              -> response_node
-                 -> END
-```
-
-The router decides whether financial tools are needed and whether the request deserves a deep analysis.
-
-The planner writes a rationale and emits LangChain tool calls.
-
-The tools node:
-
-- Groups calls by ticker.
-- Runs ticker groups concurrently.
-- Runs individual calls in worker threads.
-- Gives each call a copy of the cache.
-- Merges cache changes afterward.
-
-The scrape node:
-
-- Expands one topic into multiple research queries using structured LLM output.
-- Searches DuckDuckGo.
-- Fetches pages asynchronously.
-- Extracts article text.
-- Scores relevance.
-- Deduplicates URLs.
-- Stores sufficiently confident results.
-
-The react node checks whether more dimensions are needed. Standard and deep prompts use different sufficiency standards.
-
-The response node receives the full structured cache and writes the final Markdown analysis.
-
-### Agent Tools
-
-Research tools:
-
-- `get_financials`
-- `get_market_data`
-- `get_sector_data`
-- `scrape_web`
-
-Calculation tools:
-
-- Income-statement growth
-- Balance-sheet growth
-- Liquidity ratios
-- Solvency ratios
-- Profitability ratios
-- Efficiency ratios
-- DCF valuation
-- Comparable-company valuation
-
-### Agent Cache
-
-The cache separates:
-
-- Company data from global data.
-- Externally searched data from calculated data.
-- Financials, market data, growth, ratios, DCF scenarios, and comparables.
-
-Calculated outputs carry dependency and coverage metadata. A compact data catalogue tells the planner what is already available, while a detailed payload is only sent to the final response node.
+- Append-only message history (`operator.add`).
+- Static application context string.
+- Current year for temporal grounding.
+- Serialized tool catalogue for planner context.
+- Router route and plan status.
+- React and judge iteration counters.
+- Judge verdict and judge rationale.
+- Judge-granted react extensions.
+- Recursion fallback flag.
+- Session ID (DuckDB key).
+- Data catalog (compact availability summary).
+- Scrape history (running list of web research results).
+- Tool guidance (plan rationale passed to response).
+- Deep plan flag.
+- Current response (latest response node output; overwritten per call).
+- Query count (drives cache purge cycle).
 
 ### Streaming
 
-The agent streaming layer translates graph activity into:
+The streaming layer translates graph activity into:
+- `status` — short user-facing progress labels.
+- `thought` — summarized execution steps.
+- `delta` — final answer text chunks.
 
-- `status`: short user-facing progress.
-- `thought`: summarized execution steps.
-- `delta`: final answer text chunks.
+The API wraps these events as newline-delimited JSON (NDJSON) and adds `thread`, `done`, and `error` events.
 
-The API wraps these events as newline-delimited JSON and adds `thread`, `done`, and `error` events.
+---
 
-## 12. Authentication and Persistence
+## 15. Authentication and Persistence
 
 ### Authentication
 
-The browser signs users in through Supabase. It sends the access token to FastAPI.
-
-FastAPI verifies the token by calling:
-
-```text
-GET {SUPABASE_URL}/auth/v1/user
-```
-
-The backend then uses a service-role key for database operations.
+The browser signs users in through Supabase. The Supabase access token is sent to FastAPI. FastAPI verifies it by calling `GET {SUPABASE_URL}/auth/v1/user`. The backend then uses a service-role key for database operations.
 
 ### Database Tables
 
-The migrations create:
+- `profiles` — user metadata with foreign key to Supabase Auth users.
+- `chat_sessions` — conversation sessions per user.
+- `chat_messages` — individual messages per session.
 
-- `profiles`
-- `chat_sessions`
-- `chat_messages`
-
-The schema includes:
-
-- Foreign keys to Supabase Auth users.
-- Automatic timestamps.
-- A trigger to create a profile after signup.
-- Row-level-security policies limiting users to their own rows.
-- Additional profile fields such as username, full name, age, role, company, and biography.
+Row-level security limits users to their own rows. A trigger creates a profile on signup.
 
 ### Chat Persistence
 
-Every agent request:
+Every agent request: resolves or creates a chat session → persists user message → runs agent with session thread ID → persists assistant response → updates session metadata. Database preserves history across browser sessions. LangGraph's `MemorySaver` preserves agent state only inside the running backend process.
 
-1. Resolves or creates a chat session.
-2. Persists the user message.
-3. Runs the agent using the session's thread ID.
-4. Persists the assistant response.
-5. Updates session metadata.
+---
 
-The database preserves chat history across browser sessions. LangGraph's `MemorySaver` preserves agent state only inside the running backend process.
+## 16. Frontend Architecture
 
-## 13. Frontend Architecture
+`frontend/src/App.jsx` owns most client-side state: path, authentication, theme, API health, sessions, active session, messages, profile, composer draft, and streaming state. Routing uses `window.history`. Protected paths redirect unauthenticated users to login.
 
-### Main Application
+**Pages:** LandingPage, AuthPage, ChatPage, ProfilePage.
 
-`frontend/src/App.jsx` owns most client-side state:
+The client creates sessions on demand, adds optimistic messages, reads NDJSON incrementally, displays status labels and execution thoughts, appends streamed answer chunks, handles interruption, and reloads persisted messages when switching sessions.
 
-- Current path
-- Authentication state
-- Theme
-- API health
-- Sessions
-- Active session
-- Messages by session
-- Profile
-- Composer draft
-- Streaming state
+Assistant output is rendered as Markdown. Report-like responses support copy, download as HTML, and print/save-as-PDF actions. Exported reports include branding, generation time, and a non-advice disclaimer.
 
-Routing is implemented with `window.history` rather than a routing library. Protected paths redirect unauthenticated users to login.
+---
 
-### Pages
-
-- `LandingPage`: marketing and product introduction.
-- `AuthPage`: sign-in and registration.
-- `ChatPage`: session sidebar, messages, composer, status, theme, and account controls.
-- `ProfilePage`: editable user profile.
-
-### Chat Experience
-
-The client:
-
-- Creates sessions on demand.
-- Adds optimistic user and assistant messages.
-- Reads NDJSON incrementally.
-- Displays status labels and execution thoughts.
-- Appends streamed answer chunks.
-- Handles stream interruption.
-- Reloads persisted messages when switching sessions.
-
-### Markdown and Report Export
-
-Assistant output is rendered as Markdown. Report-like responses receive:
-
-- Report styling
-- Copy action
-- Download as standalone HTML
-- Print/browser-save-as-PDF action
-
-The exported report includes branding, generation time, and a non-advice disclaimer.
-
-## 14. Deployment Model
+## 17. Deployment Model
 
 ### Backend
 
 `render.yaml` configures a Render Python service:
 
-```text
+```bash
 pip install uv && uv sync --frozen
 uv run uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 ```
 
 ### Frontend
 
-The frontend is designed for Vercel:
+Designed for Vercel: build command `npm run build`, output `dist`, SPA rewrite to `index.html`. Required browser variables: `VITE_API_BASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
 
-- Build command: `npm run build`
-- Output: `dist`
-- SPA rewrite to `index.html`
+---
 
-Required browser variables include:
+## 18. Program Performance Observations
 
-- `VITE_API_BASE_URL`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+The following observations are based on functional testing conducted through the CLI, using `claude-haiku-4-5` as the response model.
 
-## 15. Testing and Current Validation
+### Routing Accuracy
 
-The repository has agent behavior and streaming tests, but coverage is narrow. There are no substantial tests for:
+The router reliably filters out-of-scope requests and casual messages without entering the planning path. Greetings, vague requests ("make me rich"), and off-topic questions receive direct router-level responses with zero tool calls. Questions about public companies consistently route to `plan_node`.
 
-- EDGAR mapping
-- Financial schema validators
-- Ratio formulas
-- Growth calculations
-- DCF formulas and edge cases
-- Comparable valuation
-- API routes
-- Authentication and repository behavior
-- Frontend components
+The deep-plan flag activates correctly for complex multi-dimensional questions (e.g., "When will Tesla go bankrupt?", "Make a ratio analysis for Tesla"), triggering more comprehensive tool selection and a higher sufficiency bar in the react node.
 
-Validation performed while preparing this report:
+### Tool Selection and Parallelism
 
-- Frontend production build: failed because the current `node_modules` installation does not contain `@supabase/supabase-js`, although it is declared in `package.json` and `package-lock.json`.
-- Backend tests: could not complete because `uv` needed to download a missing transitive package and network access was unavailable.
-- Existing graph tests appear stale: they import old module-level cache helpers that have moved into `FinancialsCache` methods.
+The planner selects tools with reasonable specificity:
+- Single-year metric questions (e.g., "What was Apple's revenue for 2023?") trigger `get_financials` with `fiscal_years=[2023]`, fetching only the required period.
+- Multi-company comparisons (e.g., "Compare Apple and Amazon's gross profit") trigger parallel `get_financials` calls for both tickers in a single plan.
+- Comprehensive analyses trigger all relevant tools in the first plan call, with the react node adding supplementary tools (growth rates, DCF) on judge revision.
 
-## 16. Main Strengths
+### React and Judge Interaction
+
+The react node effectively decides when data is sufficient. Simple pointed questions typically require 1 react iteration and 1 judge iteration before approval. Complex analyses (multi-tool ratio + DCF + scraping) average 3–4 react iterations and 2 judge iterations. The judge's `revise` verdict is used constructively: in observed tests, judge revisions prompted the react node to add growth rates and DCF data that were absent from the initial plan, improving the depth of the final response.
+
+Recursion limits engaged in one observed case (multi-turn context, AAPL FY2024 follow-up): the judge requested 3 revisions before the recursion guard forced a final response. The response was still accurate and complete despite the forced exit.
+
+### Cache Effectiveness
+
+Multi-turn conversations benefit from DuckDB caching. In a follow-up question about Apple's FY2024 revenue (after FY2023 was already fetched), the agent retrieved both years from cache rather than re-calling EDGAR, reducing latency and API cost.
+
+### Response Quality and Accuracy
+
+In verified tests against publicly available financials:
+- Revenue figures for AAPL (FY2023: $383.3B, FY2024: $391.0B), TSLA, and AMZN matched reported financials.
+- DCF valuations include explicit sensitivity caveats and flag data gaps (e.g., missing D&A in projections) rather than silently producing misleading outputs.
+- The agent explicitly distinguishes between data from financial statements, market data sources, and web scraping, attributing each claim to its source.
+- The judge node successfully pushed back on incomplete initial responses and the resulting revised responses included the missing dimensions (growth rates, DCF valuation) as expected.
+
+### Observed Edge Cases
+
+- **Missing D&A in DCF:** When depreciation/amortization data is unavailable in EDGAR filings, the DCF still runs but underestimates FCF. The agent flags this explicitly in the output.
+- **Tax-inflated net income:** The agent correctly identified that TSLA's FY2023 net income was elevated by a $5B tax benefit and noted this in its assessment.
+- **Negative DCF intrinsic value:** For companies with capex exceeding net income under deteriorating projections (TSLA), the model correctly outputs a negative intrinsic value and frames it as a directional signal rather than an absolute figure.
+
+---
+
+## 19. Caveats
+
+### Dependency on External Data Structure (EDGAR / edgartools)
+
+The XBRL normalization pipeline depends on the `edgartools` library and the SEC's EDGAR data structure remaining stable. The `xbrl_map.py` file maps approximately 285 specific XBRL concept names to internal fields. If EDGAR changes its taxonomy, if the edgartools library updates its internal API, or if a company files using non-standard extensions, the adapters will silently return `None` for affected fields or fail entirely. This dependency requires ongoing maintenance monitoring whenever edgartools releases a new version or the SEC updates its taxonomy.
+
+### LLM Model Dependency and Cost
+
+The agent routes different nodes to different LLM providers and models simultaneously. The choice of model directly affects response quality, inference latency, and cost per query. Smaller/faster models (Groq Llama for scraping, GPT-4o-mini for judging) reduce cost but may produce lower-quality structured outputs. Larger models (Claude Haiku for response, GPT-4.1 for planning) improve quality at higher cost. The system does not implement token counting, cost tracking, or budget guardrails. A poorly calibrated model choice — especially for the judge node, which can loop — can result in unexpectedly high API spend.
+
+### Simplistic DCF Assumptions
+
+The DCF engine uses simple historical averages for all projection inputs (constant growth rate, constant EBIT margin, constant D&A and CapEx percentages). It does not account for cyclicality, recent trend weighting, acquisitions, negative or outlier periods, or mean reversion. Terminal value frequently represents 70%+ of enterprise value, making results highly sensitive to the long-term growth assumption (hardcoded at 2.5%). Missing cash in the equity bridge (the model subtracts debt but does not add excess cash) systematically understates equity value. These limitations make the DCF output directionally useful but not a reliable standalone valuation.
+
+### Incomplete Adapter Coverage for Edge Cases
+
+Several financial statement adapters do not handle edge cases gracefully:
+- Companies that do not report all three standard statements (e.g., holding companies, REITs, special-purpose vehicles) will have missing fields that produce `None` values without clear user-facing warnings.
+- Financial sector companies (banks, insurance) use non-standard balance sheet structures that the XBRL mappings only partially cover.
+- Companies with fiscal years that do not align to standard calendar quarters may return unexpected period dates.
+
+### Calculation Services Run on Python For-Loops
+
+All ratio, growth, and DCF calculations iterate over lists and dictionaries using standard Python loops. For the typical 3–5 period span used in this application, performance is adequate. However, for larger spans, bulk analysis of many tickers, or future features requiring cross-sectional computation, replacing these loops with NumPy or pandas vectorized operations would substantially improve performance.
+
+### Underdeveloped build_data_payload Function
+
+`build_data_payload` dumps the entire DuckDB session into a single dictionary that is injected verbatim into the response node's LLM context. This includes all fields for all tickers, all fiscal years, and all computed results regardless of what the user asked. For a simple single-metric question, this means the LLM receives a large amount of irrelevant data in its context, increasing cost (prompt tokens) without improving response quality. A targeted payload builder that selects only relevant data based on the query would be more efficient.
+
+### LLM_MAX_TOKENS Requirement for Large Models
+
+The response node generates long Markdown analyses. When using large models such as Claude Opus or GPT-4 with extended context, the default output token limit may truncate the response mid-sentence. The `LLM_MAX_TOKENS` environment variable must be set to an appropriate value (e.g., `16000`) when using large models. This variable is commented out by default in the `.env` template and must be manually enabled.
+
+### Embedded Loops as a Potential Cost Sink
+
+The judge-react loop is bounded by `JUDGE_LIMIT` and `REACT_LIMIT` (both derived from `RECURSION_LIMIT = 12`), but the judge can extend the react limit on each revision cycle. If `RECURSION_LIMIT` is increased significantly (e.g., to 50+), a judge that consistently issues `revise` verdicts will trigger many additional LLM calls before the recursion guard activates. Each judge-react cycle involves at minimum two LLM calls (react + response) before the judge evaluates again. High recursion limits combined with aggressive judge prompts can turn a single user query into 20+ LLM calls.
+
+### Hardcoded Scraping Validity Logic
+
+The scrape node accepts results based on a confidence threshold (`SCRAPE_MIN_CONFIDENCE = 0.3`) computed by the scraping service. The confidence scoring is based on heuristic content matching, not actual source verification. There is no validation of publication date, source authority, or factual accuracy. The agent may cite outdated web content or low-quality sources with confidence equal to that of authoritative sources. Additionally, the scrape node does not maintain a list of validated domains or apply source-type filtering beyond what the LLM optionally specifies in `preferred_source_types`.
+
+---
+
+## 20. Main Strengths
 
 1. Clear separation between adapters, processing, services, API, agent, and persistence.
 2. Structured Pydantic financial models instead of loosely shaped dictionaries throughout the application.
 3. Dedicated tools for calculations, reducing the risk of the LLM inventing formulas.
-4. Agent cache with period coverage and dependency metadata.
-5. Concurrent execution for multi-company and multi-tool analysis.
-6. Good streaming UX with progress labels and partial answer delivery.
-7. Authenticated, user-scoped chat persistence.
-8. Practical report rendering and export.
-9. Explicit prompts about uncertainty, source quality, DCF sensitivity, and unsupported advice.
+4. Per-session DuckDB cache with cycle-based purging, eliminating redundant external API calls within a conversation.
+5. Per-node model allocation, allowing cost/quality trade-offs at each stage of the agent pipeline.
+6. Concurrent execution for multi-company and multi-tool analysis.
+7. Judge node that actively evaluates response quality and requests revisions with specific critique.
+8. Good streaming UX with progress labels, execution thoughts, and partial answer delivery.
+9. Authenticated, user-scoped chat persistence across sessions.
+10. Practical report rendering and export with branding and non-advice disclaimer.
 
-## 17. Risks and Technical Debt
+---
+
+## 21. How to Integrate an Additional Tool
+
+The agent is designed to make adding a new tool straightforward. The following steps describe how to add a new capability — for example, a bond yield spread tool or an insider trading activity tool.
+
+**Step 1 — Implement the data logic in `services/`.**
+
+Create a new service function (or extend an existing one) in `backend/src/backend/services/`. The function should accept a ticker or other parameter, call the appropriate adapter, and return a structured Python dictionary or Pydantic model.
+
+```python
+# services/insider_trades.py
+def get_insider_trades(ticker: str, days: int = 90) -> dict:
+    # Call your data source, return structured data
+    ...
+```
+
+**Step 2 — Create a cache module in `agent/cache/`.**
+
+Follow the pattern of an existing cache (e.g., `agent/cache/ratios.py`). Create a class that inherits from `CacheHelpers` and implements at minimum:
+- `get_or_calculate(conn, ticker, ...)` — checks DuckDB first, calls the service on miss, writes to DuckDB.
+- `catalog_entry(conn, ticker)` — returns a compact availability summary for `build_data_catalog`.
+- `payload_entry(conn, ticker)` — returns the full data for `build_data_payload`.
+
+**Step 3 — Add the DuckDB table to the schema in `agent/cache/session.py`.**
+
+Add a `CREATE TABLE IF NOT EXISTS` statement in `_build_ddl()` for the new tool's data. Restart the backend after this change — existing sessions will not have the new table until recreated.
+
+```python
+"""
+CREATE TABLE IF NOT EXISTS insider_trades (
+    ticker       VARCHAR  NOT NULL,
+    payload      JSON,
+    span_days    INTEGER,
+    cycle        INTEGER DEFAULT 0,
+    last_updated TIMESTAMPTZ,
+    PRIMARY KEY (ticker)
+)
+"""
+```
+
+**Step 4 — Register the cache in `agent/cache/__init__.py` and `catalog.py`.**
+
+Import and export the new cache class from `__init__.py`. Add calls to `your_cache.catalog_entry(conn, ticker)` and `your_cache.payload_entry(conn, ticker)` in `build_data_catalog` and `build_data_payload` respectively, following the pattern of existing entries.
+
+**Step 5 — Create the LangChain tool in `agent/tools/`.**
+
+Add a `@tool`-decorated function in `agent/tools/calculation.py` (for computed data) or `agent/tools/research.py` (for external data). The function must accept `session_id: Annotated[str, InjectedToolArg] = ""` as the last argument — the tools node injects this at call time.
+
+```python
+@tool
+def get_insider_trades(
+    ticker: str,
+    days: int = 90,
+    session_id: Annotated[str, InjectedToolArg] = "",
+) -> dict:
+    """Retrieve recent insider trading activity for a ticker."""
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = InsiderTradesCache.get_or_calculate(conn, ticker, days, session_id=session_id)
+    finally:
+        conn.close()
+    return result
+```
+
+**Step 6 — Register the tool in `agent/tools/registry.py`.**
+
+Add the new tool function to the `TOOLS_BY_NAME` dictionary and the `tools` list. The plan node builds its `ToolName` enum from `TOOLS_BY_NAME` automatically, so the LLM will see the new tool immediately.
+
+**Step 7 — Update the system prompts in `agent/prompts.py`.**
+
+Add a description of the new tool to the relevant prompt sections (plan, react, response) so the LLM understands when and how to use it. The planner prompt should include a brief description of what the tool returns. The response prompt should include guidance on how to interpret and present the new data type.
+
+**Step 8 — Test via the CLI.**
+
+Run `uv run python src/backend/agent/main.py` and ask a question that should trigger the new tool. Verify that the plan node includes it in the tool call list, the tools node executes it, and the response node incorporates the result.
+
+---
+
+## 22. How to Connect Your Own Database
+
+This section explains how to replace or supplement an existing external data source with a proprietary data feed — for example, an internal financial data API, a licensed market data provider, or an institutional research database.
+
+The pattern is the same regardless of the data provider: create an adapter, plug it into the existing service layer, and the rest of the pipeline (cache, tools, agent) picks it up automatically.
+
+**Step 1 — Create a new adapter in `backend/adapters/`.**
+
+Write a new file (e.g., `adapters/bloomberg.py`) that wraps your data source's API or database client. The adapter's job is to translate between your source's data format and the internal field names used by `processing/schema.py`.
+
+The adapter should:
+- Accept a ticker and span (or other relevant parameters).
+- Authenticate using credentials stored in `.env` (add them to `core/config.py`).
+- Return data in the same format as the existing adapters: `{period_end: {internal_field: value}}` for time-series data, or a plain dict for snapshots.
+
+```python
+# adapters/bloomberg.py
+from backend.core.config import settings
+
+class ProprietaryDataAdapter:
+    def __init__(self, ticker: str):
+        self.ticker = ticker
+        self.client = YourDataClient(token=settings.proprietary_api_key)
+
+    def fetch_financials(self, span: int) -> dict:
+        raw = self.client.get_financials(self.ticker, years=span)
+        # Normalize to internal field names matching processing/schema.py
+        return {period_end: normalize(row) for period_end, row in raw.items()}
+```
+
+**Step 2 — Add credentials to `core/config.py` and `backend/.env`.**
+
+Add the new API key or connection string to the `Settings` class in `core/config.py` and add it to `backend/.env`:
+
+```python
+# core/config.py
+bloomberg_api_key: str | None = None
+```
+
+```env
+# backend/.env
+BLOOMBERG_API_KEY=your_key_here
+```
+
+**Step 3 — Integrate the adapter into the relevant service in `backend/services/`.**
+
+Find the service that orchestrates the data type you are replacing or supplementing. For example, to replace EDGAR financials with a proprietary data source:
+
+- In `services/financials.py`, modify `get_financials()` to call your new adapter instead of (or in addition to) `Edgar`.
+- If you want to fall back to EDGAR when the proprietary source is unavailable, implement a try/except fallback chain.
+
+The Pydantic schema validation step in `processing/schema.py` and all downstream calculations (growth, ratios, DCF) are unaffected because they operate on the normalized internal field names, not on the adapter output directly.
+
+**Step 4 — If the new source provides a new data type not already modeled, extend the schema.**
+
+If your data source provides something genuinely new (e.g., ESG scores, credit default swap spreads, real-time order flow), add new Pydantic fields to the appropriate model in `processing/schema.py`, extend the XBRL mapping or create a new mapping file, and add a new DuckDB table in `agent/cache/session.py`.
+
+**Step 5 — No changes are required to the agent layer.**
+
+The agent, tool registry, cache system, and response node are all source-agnostic. They interact with data through the service functions and the DuckDB cache. As long as the service functions return the same Pydantic types, the entire agent pipeline operates identically regardless of the underlying data source.
+
+**Step 6 — For real-time or streaming data sources, open a connection per tool call.**
+
+The tools node calls each tool in a thread (`asyncio.to_thread`). Each tool should open and close its DuckDB connection within the call. If your data source requires a persistent connection (e.g., a database pool), initialize it as a module-level singleton in the adapter, following the pattern of `adapters/fred.py`'s process-lifetime cache.
+
+---
+
+## 23. Prompt Design
+
+`agent/prompts.py` contains every system prompt used by the agent. This section explains how the prompts are structured, why they are designed the way they are, and where their limitations lie.
+
+### Structure Overview
+
+The file defines the following components:
+
+| Component | Purpose |
+|---|---|
+| `data_dictionary` | Shared reference that teaches every node how to interpret each tool's output fields correctly |
+| `app_context` | Universal BABON identity and behavior instructions — injected into every node's system prompt |
+| `router_prompt` | Routing decision only: end vs. plan_node, standard vs. deep |
+| `plan_prompt` / `deep_plan_prompt` | Initial tool-call generation for standard and deep analysis paths |
+| `react_prompt` / `deep_react_prompt` | Gap-checking and supplementary tool calls after initial results |
+| `response_prompt` / `deep_response_prompt` | Final answer composition for standard and deep analysis paths |
+| `scrape_prompt` | Web research query generation and search strategy |
+| `judge_prompt` | Analytical reasoning evaluation — approves or requests revision |
+| `judge_react_addendum` | Appended to react prompt only during a revision cycle |
+| `judge_response_addendum` | Appended to response prompt only during a revision cycle; carries the prior response and critique |
+
+Shared rules that appear in multiple node prompts are defined once as private variables (`_DONT_PLAN`, `_TOOL_USE_RULES`, `_SPAN_RULES`, `_STOP_GATE`) and injected via f-strings. This keeps the rules at a single source of truth and prevents them from drifting out of sync.
+
+### Design Rationale
+
+**Divided workload instead of a monolithic prompt.**
+
+Rather than a single large prompt that tries to instruct the model to plan, execute, react, judge, and respond all at once, each node receives only the instructions relevant to its specific function. The router prompt says only: decide the route. The plan prompt says only: call the right tools. The react prompt says only: check what is missing and call more tools if needed. The response prompt says only: interpret and present the data.
+
+This division keeps each LLM call narrowly focused. The model is not trying to simultaneously reason about tool selection, data gaps, analytical interpretation, and response formatting in a single context — it does one thing at a time, which reduces instruction conflicts and improves reliability.
+
+**Strict scope boundaries with explicit prohibitions.**
+
+Each node prompt includes explicit negative instructions to prevent scope creep. The plan node receives: *"Do not answer the user. Do not analyze results. Do not summarize tool outputs. Do not invent financial data. Only call tools to gather information."* The judge receives: *"Structure, format, length, tone, conciseness, and presentation style are not your concern."* The react prompt states: *"If a tool's data is already in cached_data_catalog, do NOT call it again regardless of what the tool messages say."*
+
+These prohibitions address real failure modes observed during development: a planner that starts answering the question instead of calling tools, a judge that flags formatting preferences rather than analytical flaws, or a react node that re-calls tools already present in the cache because it misread the tool message history. Each prohibition is a guard against a known pattern of model misbehavior.
+
+**Standard and deep prompt pairs.**
+
+Every major node — plan, react, and response — has two versions: a standard prompt and a deep prompt. The router selects between them by setting `deep_plan` in state. Deep prompts expand the sufficiency standard: the deep react prompt uses `_STOP_GATE`, a checklist of all analytical dimensions (profitability, liquidity, solvency, efficiency, growth, valuation, market context, qualitative context) that must all be covered before the node can signal readiness. The deep response prompt adds an analytical chain-of-reasoning framework, cross-dimensional reasoning examples, confidence labeling per conclusion, and a required open-questions section. Standard prompts are narrower and faster, designed for focused single-metric questions.
+
+**The data dictionary as a shared interpretation layer.**
+
+The `data_dictionary` string is injected into every node's system prompt via `build_system_prompt` in `agent/llm.py`. It does not describe what the tools do — that is covered by the tool schemas in `available_tools`. Instead, it instructs the model on how to interpret each field: what each metric should and should not be used for, what edge cases to flag, and what downstream bias a missing value introduces.
+
+For example: `long_term_growth_rate` is documented as *"GDP-proxy terminal growth assumption (hardcoded at 2.5%). Use for: DCF terminal value only. Not for: company-specific growth forecast, sector growth trend, or analyst consensus. This is a model floor, not a prediction."* Without this instruction, a model would reasonably present the 2.5% figure as an industry or company growth expectation rather than a mechanical DCF floor.
+
+**Temporal grounding built into routing and planning.**
+
+Multiple prompts explicitly address `runtime_context.current_year` and instruct the model to treat it as the authoritative year rather than relying on training-data priors. The router prompt states: *"Any fiscal year before current_year has already ended and its actuals are retrievable via structured tools — never reject these requests as 'future' or 'unavailable' data."* This prevents a recurring model failure where the model refuses to fetch fiscal year data it believes has not yet occurred because its training cutoff predates the current year.
+
+**Judge isolation from data.**
+
+The judge node receives only the human messages and the current response text — not the full financial data payload. It is explicitly instructed: *"You do not have access to the underlying financial data — do not question whether figures are accurate. Trust that the tools provided correct data."* The judge evaluates only the quality of the reasoning and whether conclusions follow from the evidence cited in the response itself. This isolation prevents the judge from second-guessing data correctness (which it cannot verify) and keeps its evaluation focused purely on analytical logic.
+
+**Revision cycle addenda.**
+
+The `judge_react_addendum` and `judge_response_addendum` are not part of the base node prompts. They are appended by `react_node` and `response_node` only when `judge_verdict == "revise"`. This keeps the normal execution path clean and adds the revision context (the judge's critique, the prior response) only when it is actually needed. The response addendum includes a hard instruction: *"Write the entire response as if writing it for the first time... The user sees only what you write now — there is no prior version visible to them."* This prevents the model from producing patch-style responses that reference the previous version rather than rewriting it completely.
+
+**Loop prevention in the react prompt.**
+
+The react prompt includes explicit hard rules to prevent tool re-execution: the `data_catalog` is declared the ground truth over the tool message history, and re-calling a tool already in the catalog is prohibited regardless of what tool messages say. This addresses a real failure mode: after several tool messages accumulate in the history, models sometimes lose track of what has been called and begin repeating calls. The catalog-as-ground-truth instruction short-circuits this by giving the model a single authoritative source to check rather than parsing an accumulating list of tool messages.
+
+---
+
+### Weaknesses
+
+**Prompts are still large.**
+
+Even after dividing the workload, several prompts are long. The `deep_response_prompt` alone spans hundreds of lines covering cross-dimensional reasoning, analytical lenses, confidence labeling, red flags, and a required report structure. The `judge_prompt` is similarly detailed about what it must and must not evaluate. While smaller than a monolithic prompt, each node's total system context — `app_context` + `data_dictionary` + node prompt + runtime context — still amounts to a substantial token investment per LLM call.
+
+**Smaller models may not follow multi-layered instructions reliably.**
+
+The prompts are designed and validated against GPT-4.1, Claude Haiku, and Llama 3.3 70B. Smaller models (7B–13B parameter local models, lower-tier API options) tend to follow the first few paragraphs of a long prompt well but lose track of instructions placed later in the context. A small model used as the plan or react node may ignore the loop-prevention hard rules, produce unstructured output that fails the Pydantic structured-output schema, or conflate instructions from different sections. The system has no automatic fallback or prompt-size adaptation for smaller models — running them requires manual prompt simplification.
+
+**Token degradation over long conversations.**
+
+LLMs can show reduced instruction compliance in very long conversations where the system prompt is a small fraction of the total context. As the message history grows across many turns — especially in deep analysis sessions with multiple tool calls per turn — the proportion of context dedicated to the system prompt shrinks relative to the accumulated tool messages and conversation history. Late in a long conversation, the model may begin drifting away from the citation rules, the analytical framework, or the output format specified in the response prompt, because those instructions are far back in the context window relative to the recent conversational content.
+
+**The data dictionary is injected into every node, including those that do not need it.**
+
+`build_system_prompt` in `agent/llm.py` injects `data_dictionary` into every node's system prompt unconditionally. The router node, which only needs to decide a route, receives the full data dictionary about DCF field interpretations, efficiency ratio nuances, and scrape confidence thresholds — none of which it needs. This increases the token cost of every router call without adding any value. A node-aware injection policy (inject data dictionary only into react and response nodes) would reduce cost without affecting quality.
+
+**The judge cannot catch tool selection failures.**
+
+The judge evaluates only the reasoning in the final response. If the plan node selected the wrong tools or called tools with incorrect arguments, the judge has no mechanism to detect or correct this. It receives only the human question and the response text — it cannot compare the response against the raw financial data or verify that the right tools were called. A plan that selected `span=1` when the user asked for a 5-year trend, or that omitted DCF because it misclassified the question, would produce a response that may appear analytically sound to the judge even though it is built on incomplete data.
+
+**Revision cycles grow prompt size.**
+
+When the judge requests a revision, the `judge_response_addendum` appends the prior response text to the response node's system prompt so the model can see what it previously wrote. For long deep-analysis responses, this can add two to three thousand tokens to an already-large system prompt. In a second revision cycle, the prior response included is itself a revision — the accumulated prior response text grows with each cycle, potentially approaching the context limit of smaller models used for the response node.
+
+---
+
+## 24. Risks and Technical Debt
 
 ### Critical
 
-1. **Case-sensitive import failure**
+1. **DCF denominator and required-input safety**
 
-   The directory is `backend/Agent`, but production code imports `backend.agent`. This may work on a default macOS filesystem but will fail on case-sensitive Linux hosts such as Render. Rename the directory to lowercase or update every import consistently.
+   `run_dcf()` does not reject `WACC <= terminal growth`, zero shares, empty periods, missing base revenue, or zero enterprise value. These cases can produce division errors, negative terminal values, or invalid ratios without clear user-facing error messages.
 
-2. **DCF denominator and required-input safety**
+2. **In-memory agent checkpointing**
 
-   `run_dcf()` does not reject `WACC <= terminal growth`, zero shares, empty periods, missing base revenue, or zero enterprise value. These cases can produce division errors, negative terminal values, or invalid ratios.
-
-3. **Global deep-plan state**
-
-   `Deep_Plan` is a module-level global. Concurrent users can overwrite each other's depth mode. It should be stored only in `AgentState`.
+   LangGraph conversation state (MemorySaver) disappears on process restart and is not shared across multiple backend instances. Persisted chat text remains, but the agent cache and internal context (tool results, scrape history) do not survive a backend restart. Each new session after a restart starts from a clean DuckDB file even if the chat history in Supabase has prior context.
 
 ### High
 
-4. **Requested recursion limit is ignored**
+3. **Requested recursion limit is not honored**
 
-   `_agent_config()` always sets `DEFAULT_RECURSION_LIMIT * 1000` and does not use the request's `recursion_limit`. The separate force-response helper reads this inflated value, weakening the intended guard.
+   The `agent_service.py` passes `recursion_limit` to `activate_agent_async`, but the graph-level recursion guard is managed internally by `RECURSION_LIMIT` in `constants.py`. These are currently not wired together consistently.
 
-5. **Documentation drift**
+4. **Blocking work inside sync API routes**
 
-   `README.md`, `ARCHITECTURE.md`, `AGENTIC.md`, and `STATUS.md` describe different historical graph designs, missing files, lowercase paths, and metrics not implemented in the live ratio service.
+   EDGAR, Yahoo, FRED, and Damodaran calls are synchronous. FastAPI runs sync routes in a thread pool, but long EDGAR downloads or Damodaran Excel fetches can still reduce capacity under load.
 
-6. **Test drift and limited coverage**
+5. **External HTTP robustness**
 
-   Some tests target removed helper functions. Core financial calculations lack regression tests.
+   FRED uses `requests.get()` without explicit timeouts or `raise_for_status()`. Yahoo Finance error handling is thin. Retries, timeouts, and clearer provider-specific exceptions are needed for production reliability.
 
-7. **Blocking work inside sync API routes**
+6. **Historical assumption quality in DCF**
 
-   EDGAR, Yahoo, FRED, and Damodaran calls are synchronous. Standard FastAPI `def` routes use a thread pool, but long network work and Excel downloads can still reduce capacity.
+   DCF assumptions use simple averages, constant growth, and constant margins. Outliers, negative denominators, acquisitions, cyclicality, and recent trend weighting are not handled.
 
-8. **External HTTP robustness**
+7. **Missing cash in the equity bridge**
 
-   FRED uses `requests.get()` without an explicit timeout or `raise_for_status()`. Yahoo and Damodaran handling is also thin. Retries, timeouts, and clearer provider-specific exceptions are needed.
+   The DCF subtracts debt but does not add excess cash. This can materially understate equity value.
 
 ### Medium
 
-9. **Financial terminology**
+8. **Financial terminology**
 
-   `debt_to_equity` and `debt_to_assets` use total liabilities, not interest-bearing debt. The labels can mislead users.
+   `debt_to_equity` and `debt_to_assets` use total liabilities, not interest-bearing debt. The labels can mislead users comparing against standard financial databases.
 
-10. **Historical assumption quality**
+9. **Long-term growth is effectively global**
 
-    DCF assumptions use simple averages, constant growth, and constant margins. Outliers, negative denominators, acquisitions, cyclicality, and recent trend weighting are not handled.
+   `SectorData.long_term_growth_rate` defaults to 2.5%. It is not industry-specific despite being stored per sector year.
 
-11. **Missing cash in the equity bridge**
-
-    The DCF subtracts debt but does not add excess cash. This can materially understate equity value.
-
-12. **Long-term growth is effectively global**
-
-    `SectorData.long_term_growth_rate` defaults to 2.5%; it is not actually industry-specific.
-
-13. **In-memory agent checkpointing**
-
-    LangGraph conversation state disappears on process restart and is not shared across multiple backend instances. Persisted chat text remains, but agent cache and internal context do not.
-
-14. **Comparables integration**
+10. **Comparables integration**
 
     Comparables are agent-only, have no REST endpoint, and rely on broad SIC mapping and externally downloaded spreadsheets.
 
-15. **Frontend state concentration**
+11. **Frontend state concentration**
 
     `App.jsx` handles routing, data loading, sessions, messaging, profile state, health checks, and streaming. This will become difficult to maintain as features grow.
 
-16. **No automated CI shown**
+---
 
-    The repository does not include an obvious workflow that installs dependencies, runs tests, and builds both applications for every pull request.
+## 25. Recommended Priorities
 
-## 18. Recommended Priorities
+### Priority 1: Protect Financial Correctness
 
-### Priority 1: Make Deployment Reliable
-
-- Rename `Agent/` to `agent/` and normalize imports.
-- Reinstall frontend dependencies from the lockfile.
-- Confirm `uv sync --frozen` in a clean environment.
-- Add a CI workflow for backend tests and frontend build.
-- Add a production startup smoke test.
-
-### Priority 2: Protect Financial Correctness
-
-- Validate all required DCF inputs.
-- Reject or explicitly handle `WACC <= g`.
+- Validate all required DCF inputs and reject or explicitly handle `WACC <= g`.
 - Add cash to the enterprise-to-equity bridge.
-- Clarify interest-bearing debt versus total liabilities.
+- Clarify interest-bearing debt versus total liabilities in ratio labels.
 - Add unit tests for every formula and edge case.
 - Add DCF sensitivity tables for WACC and terminal growth.
 
-### Priority 3: Stabilize the Agent
+### Priority 2: Stabilize the Agent
 
-- Move deep-plan selection into state.
-- Honor the user-provided recursion limit.
-- Persist LangGraph checkpoints in a durable shared store.
-- Test concurrent users and multi-ticker cache merges.
-- Align prompt data definitions with actual ratio outputs.
+- Wire `recursion_limit` from the request through to the graph-level guard consistently.
+- Persist LangGraph checkpoints in a durable shared store (e.g., a Postgres-backed checkpointer) so agent state survives restarts.
+- Make `build_data_payload` query-aware to reduce unnecessary token usage.
+- Test concurrent users and multi-ticker cache interaction under load.
 
-### Priority 4: Reduce Documentation and Code Drift
+### Priority 3: Improve Reliability
 
-- Treat this report or a revised architecture document as the canonical reference.
+- Add timeouts, retries, and `raise_for_status()` to all HTTP adapter calls.
+- Add a production startup smoke test.
+- Confirm `uv sync --frozen` in a clean environment.
+- Add a CI workflow for backend tests and frontend build.
+
+### Priority 4: Reduce Documentation Drift
+
 - Archive obsolete scripts or clearly mark experimental ones.
-- Update endpoint and tool catalogues.
+- Keep endpoint and tool catalogues in sync with the code.
 - Remove stale imports and dead test assumptions.
 
 ### Priority 5: Improve Maintainability
@@ -737,12 +1188,14 @@ Validation performed while preparing this report:
 - Split frontend state into routing, sessions, profile, and chat hooks.
 - Introduce typed frontend API contracts.
 - Add structured logging and request IDs.
-- Add provider timeouts, retries, and monitoring.
 - Add integration tests using mocked external providers.
 
-## 19. Overall Assessment
+---
 
-The project has a strong product concept and a surprisingly complete implementation: it can ingest filings, calculate financial analytics, run valuations, coordinate an LLM agent, stream results, authenticate users, persist chats, and export reports.
+## 26. Overall Assessment
 
-It should currently be considered a late prototype or early beta rather than production-ready. The architecture is capable of supporting a production system, but financial edge-case handling, import portability, concurrency safety, tests, dependency reproducibility, and documentation consistency need attention before users should rely on it for repeatable valuation work.
+The project has a strong product concept and a meaningfully complete implementation: it can ingest SEC filings, calculate financial analytics, run valuations, coordinate a multi-model LLM agent with a judge-react quality loop, stream results to the browser, authenticate users, persist chats, and export reports.
 
+The architecture is well-structured and genuinely extensible — adding a new tool, swapping an LLM provider, or connecting a proprietary data source each requires changes in a small, well-defined location rather than scattered edits. The judge-react loop in particular demonstrates thoughtful design, enabling the agent to self-correct without user intervention.
+
+The system should currently be considered a late prototype or early beta. Financial edge-case handling, DCF correctness guardrails, external HTTP robustness, recursion-limit consistency, and test coverage need attention before the output should be relied upon for repeatable valuation work.
