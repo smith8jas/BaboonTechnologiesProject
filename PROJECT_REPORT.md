@@ -648,6 +648,8 @@ Two functions in `cache/catalog.py` serve different consumers:
 - `build_data_catalog(conn)` — produces a compact availability summary (which tickers have which data types, with coverage metadata). This is stored in `AgentState.data_catalog` and fed to the react and router nodes so they can see what data is already available without reading the full values.
 - `build_data_payload(conn)` — produces the full detailed data for every ticker and all computed results. This is only called by `response_node`, which passes it to the LLM as `gathered_data` in the system prompt.
 
+Both functions iterate dynamically over `COMPANY_TOOL_CACHES`, a list of all per-ticker cache classes defined at the top of `catalog.py`. Each cache class declares three class-level attributes — `catalog_key`, `catalog_category`, and `table_name` — that drive both functions and the `_TICKER_UNION_SQL` query automatically. Adding a new per-ticker cache to the list is the only change required to have it included in both the catalog and the payload.
+
 ### Step 6 — Response Generation
 
 The response node injects the full `build_data_payload` output into the LLM's context. The LLM synthesizes the structured data — multi-year financial statements, growth rates, ratios, DCF projections, and web research snippets — into a coherent investor-oriented Markdown response. The response is then evaluated by the judge node and, if approved, returned to the user.
