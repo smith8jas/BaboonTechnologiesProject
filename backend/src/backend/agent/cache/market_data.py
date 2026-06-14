@@ -12,6 +12,9 @@ from .session import get_session_cycle, now
 
 
 class MarketDataCache:
+    catalog_key = "market_data"
+    catalog_category = "searched"
+    table_name = "market_data"
 
     @staticmethod
     def get_or_fetch(

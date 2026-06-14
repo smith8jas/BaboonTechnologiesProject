@@ -12,6 +12,13 @@ from .market_data import MarketDataCache
 from .ratios import RatiosCache
 from .sector_data import SectorDataCache
 
+# All per-ticker cache classes. Each must expose:
+#   catalog_key      str  — key used in catalog and payload dicts
+#   catalog_category str  — "searched" or "calculated" (for build_data_catalog)
+#   table_name       str  — DuckDB table that holds this cache's rows
+#
+# Adding a new per-ticker cache: append its class here. Both build functions
+# and _TICKER_UNION_SQL pick it up automatically.
 COMPANY_TOOL_CACHES = [
     FinancialsCache,
     MarketDataCache,
@@ -21,17 +28,16 @@ COMPANY_TOOL_CACHES = [
     CompsCache,
 ]
 
-# All tables that carry a per-ticker column — UNION gives every ticker that has any data.
-_TICKER_UNION_SQL = """
-    SELECT ticker FROM companies
-    UNION SELECT ticker FROM financials
-    UNION SELECT ticker FROM market_data
-    UNION SELECT ticker FROM growth_rates
-    UNION SELECT ticker FROM ratios
-    UNION SELECT ticker FROM dcf
-    UNION SELECT ticker FROM comparables
-    ORDER BY ticker
-"""
+# Built from COMPANY_TOOL_CACHES so new caches are included automatically.
+# `companies` is prepended explicitly — it is written by FinancialsCache but
+# is a metadata table, not a cache class of its own.
+_TICKER_UNION_SQL = (
+    "\n    UNION ".join(
+        ["SELECT ticker FROM companies"]
+        + [f"SELECT ticker FROM {cls.table_name}" for cls in COMPANY_TOOL_CACHES]
+    )
+    + "\n    ORDER BY ticker"
+)
 
 
 def build_data_catalog(conn: duckdb.DuckDBPyConnection) -> dict:
@@ -51,29 +57,10 @@ def build_data_catalog(conn: duckdb.DuckDBPyConnection) -> dict:
             "calculated": {},
         }
 
-        fin = FinancialsCache.catalog_entry(conn, ticker)
-        if fin:
-            entry["searched"]["financials"] = fin
-
-        mkt = MarketDataCache.catalog_entry(conn, ticker)
-        if mkt:
-            entry["searched"]["market_data"] = mkt
-
-        gro = GrowthCache.catalog_entry(conn, ticker)
-        if gro:
-            entry["calculated"]["growth"] = gro
-
-        rat = RatiosCache.catalog_entry(conn, ticker)
-        if rat:
-            entry["calculated"]["ratios"] = rat
-
-        dcf = DCFCache.catalog_entry(conn, ticker)
-        if dcf:
-            entry["calculated"]["dcf"] = dcf
-
-        cmp = CompsCache.catalog_entry(conn, ticker)
-        if cmp:
-            entry["calculated"]["comparables"] = cmp
+        for CacheClass in COMPANY_TOOL_CACHES:
+            result = CacheClass.catalog_entry(conn, ticker)
+            if result:
+                entry[CacheClass.catalog_category][CacheClass.catalog_key] = result
 
         catalog["companies"].append(entry)
 
@@ -91,29 +78,10 @@ def build_data_payload(conn: duckdb.DuckDBPyConnection) -> dict:
     for ticker in tickers:
         entry: dict = {}
 
-        fin = FinancialsCache.payload_entry(conn, ticker)
-        if fin:
-            entry["financials"] = fin
-
-        mkt = MarketDataCache.payload_entry(conn, ticker)
-        if mkt:
-            entry["market_data"] = mkt
-
-        gro = GrowthCache.payload_entry(conn, ticker)
-        if gro:
-            entry["growth"] = gro
-
-        rat = RatiosCache.payload_entry(conn, ticker)
-        if rat:
-            entry["ratios"] = rat
-
-        dcf = DCFCache.payload_entry(conn, ticker)
-        if dcf:
-            entry["dcf"] = dcf
-
-        cmp = CompsCache.payload_entry(conn, ticker)
-        if cmp:
-            entry["comparables"] = cmp
+        for CacheClass in COMPANY_TOOL_CACHES:
+            result = CacheClass.payload_entry(conn, ticker)
+            if result:
+                entry[CacheClass.catalog_key] = result
 
         if entry:
             payload[ticker] = entry

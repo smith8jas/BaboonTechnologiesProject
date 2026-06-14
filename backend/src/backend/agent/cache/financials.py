@@ -98,6 +98,9 @@ def _build_hf(conn: duckdb.DuckDBPyConnection, ticker: str, rows: list[dict]) ->
 
 
 class FinancialsCache:
+    catalog_key = "financials"
+    catalog_category = "searched"
+    table_name = "financials"
 
     @staticmethod
     def get_or_fetch(

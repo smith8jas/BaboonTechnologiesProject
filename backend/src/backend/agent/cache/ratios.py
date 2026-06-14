@@ -13,6 +13,9 @@ from .financials import FinancialsCache
 from .session import get_session_cycle, now
 
 class RatiosCache:
+    catalog_key = "ratios"
+    catalog_category = "calculated"
+    table_name = "ratios"
 
     _RATIO_FUNCS = {
         "liquidity": ratio_service.get_liquidity_ratios,

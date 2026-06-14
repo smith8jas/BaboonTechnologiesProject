@@ -13,6 +13,9 @@ from .session import get_session_cycle, now
 
 
 class CompsCache:
+    catalog_key = "comparables"
+    catalog_category = "calculated"
+    table_name = "comparables"
 
     @staticmethod
     def get_or_calculate_peer(

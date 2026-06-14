@@ -17,6 +17,9 @@ BALANCE_SHEET = "balance_sheet"
 
 
 class GrowthCache:
+    catalog_key = "growth"
+    catalog_category = "calculated"
+    table_name = "growth_rates"
 
     @staticmethod
     def get_or_calculate(

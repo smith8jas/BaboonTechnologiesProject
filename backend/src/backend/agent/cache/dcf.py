@@ -18,6 +18,9 @@ SCENARIO_DEFAULT = "default"
 
 
 class DCFCache:
+    catalog_key = "dcf"
+    catalog_category = "calculated"
+    table_name = "dcf"
 
     @staticmethod
     def get_or_calculate(

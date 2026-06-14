@@ -864,29 +864,97 @@ The scrape node accepts results based on a confidence threshold (`SCRAPE_MIN_CON
 
 ## 21. How to Integrate an Additional Tool
 
-The agent is designed to make adding a new tool straightforward. The following steps describe how to add a new capability — for example, a bond yield spread tool or an insider trading activity tool.
+The agent is designed to make adding a new tool straightforward. The actual number of steps depends on what kind of tool you are adding. There are two distinct paths:
 
-**Step 1 — Implement the data logic in `services/`.**
+- **Path A — New calculation over existing cached data** (e.g., a new ratio, a new derived metric): 3 steps. The cache infrastructure already exists; you only need to write the tool function, register it, and update the prompts.
+- **Path B — New external data source** (e.g., insider trading activity, bond yield spreads, ESG scores): 6–7 steps. You need to build the full cache stack in addition to the tool function and registration.
 
-Create a new service function (or extend an existing one) in `backend/src/backend/services/`. The function should accept a ticker or other parameter, call the appropriate adapter, and return a structured Python dictionary or Pydantic model.
+Choose the path that matches what you are adding. Do not follow Path B steps if an existing cache table can hold your data.
+
+---
+
+### Path A — New Calculation over Existing Cached Data
+
+Use this path when the tool computes a new metric from data already stored in DuckDB (financials, market data, ratios, growth rates, DCF, or comparables). No new tables, no new cache classes, no changes to `session.py` or `catalog.py`.
+
+**Step A1 — Implement the calculation in `agent/tools/calculation.py`.**
+
+Add a `@tool`-decorated function. The function must accept `session_id: Annotated[str, InjectedToolArg] = ""` as its last argument — the tools node injects this at call time. Open a DuckDB connection, read from the existing cache, compute your result, write it back if needed, and close the connection.
+
+```python
+@tool
+def get_custom_margin_analysis(
+    ticker: str,
+    session_id: Annotated[str, InjectedToolArg] = "",
+) -> dict:
+    """Calculate custom margin analysis from cached financials."""
+    conn = open_connection(session_id)
+    try:
+        result, was_cached = RatiosCache.get_or_calculate(conn, ticker, session_id=session_id)
+    finally:
+        conn.close()
+    return result
+```
+
+If the calculation requires raw financials, read from `FinancialsCache`. If it requires market data, read from `MarketDataCache`. All existing cache classes expose a `get_or_calculate` or `get_or_fetch` method that handles cache hit/miss transparently.
+
+**Step A2 — Register the tool in `agent/tools/registry.py`.**
+
+Import your function at the top of the file and add a `ToolSpec` entry to `TOOL_SPECS`. Do not touch `TOOLS_BY_NAME` or `tools` directly — they are derived automatically from `TOOL_SPECS`:
+
+```python
+ToolSpec(
+    tool=get_custom_margin_analysis,
+    group="ratio",          # logical group for streaming labels
+    route="ratios",         # route tag used by streaming events
+    capability="Calculate custom margin analysis for a ticker over the latest fiscal-period span.",
+    phase=PHASE_CALCULATION,
+),
+```
+
+`TOOLS_BY_NAME` is built from `TOOL_SPECS` on import, and `plan_node` builds its `ToolName` enum from `TOOLS_BY_NAME` automatically. The LLM will see the new tool immediately after you add the spec.
+
+**Step A3 — Update `agent/prompts.py`.**
+
+Add a short entry for the new tool in `data_dictionary`. This is the shared reference that teaches every node how to interpret the tool's output. Follow the format of existing entries: state what the field measures, what it should and should not be used for, and any known edge cases or caveats.
+
+```
+get_custom_margin_analysis
+  adjusted_margin    Adjusted operating margin after removing one-time charges. Use for:
+                     trend analysis across periods. Not for: direct GAAP comparison —
+                     adjustments are derived mechanically, not auditor-verified.
+```
+
+No changes to the plan, react, or response prompts are required if the tool fits naturally into an existing analytical category (e.g., a new ratio type). If the tool represents a genuinely new analytical dimension that the planner would not know to invoke, add a brief description to the plan prompt's tool list.
+
+---
+
+### Path B — New External Data Source
+
+Use this path when the tool fetches data from an external API or database that is not already stored in any existing DuckDB table. You need to build the full cache stack before writing the tool function.
+
+**Step B1 — Implement the data logic in `services/`.**
+
+Create a new service file (or extend an existing one) in `backend/src/backend/services/`. The function should call the appropriate adapter and return a structured Python dictionary or Pydantic model.
 
 ```python
 # services/insider_trades.py
 def get_insider_trades(ticker: str, days: int = 90) -> dict:
-    # Call your data source, return structured data
+    # Call your data source adapter, normalize, return structured data
     ...
 ```
 
-**Step 2 — Create a cache module in `agent/cache/`.**
+**Step B2 — Create a cache class in `agent/cache/`.**
 
-Follow the pattern of an existing cache (e.g., `agent/cache/ratios.py`). Create a class that inherits from `CacheHelpers` and implements at minimum:
+Create a new file (e.g., `agent/cache/insider_trades.py`). Follow the pattern of an existing cache — `agent/cache/ratios.py` is the closest model for JSON-payload tables. The class must inherit from `CacheHelpers` and implement at minimum:
+
 - `get_or_calculate(conn, ticker, ...)` — checks DuckDB first, calls the service on miss, writes to DuckDB.
-- `catalog_entry(conn, ticker)` — returns a compact availability summary for `build_data_catalog`.
-- `payload_entry(conn, ticker)` — returns the full data for `build_data_payload`.
+- `catalog_entry(conn, ticker)` — returns a compact availability summary dict for `build_data_catalog`.
+- `payload_entry(conn, ticker)` — returns the full data dict for `build_data_payload`.
 
-**Step 3 — Add the DuckDB table to the schema in `agent/cache/session.py`.**
+**Step B3 — Add the DuckDB table to `agent/cache/session.py`.**
 
-Add a `CREATE TABLE IF NOT EXISTS` statement in `_build_ddl()` for the new tool's data. Restart the backend after this change — existing sessions will not have the new table until recreated.
+Add a `CREATE TABLE IF NOT EXISTS` statement inside `_build_ddl()`. Use a JSON payload column for unstructured or variable-schema data, following the pattern of `growth_rates`, `ratios`, `dcf`, and `comparables`:
 
 ```python
 """
@@ -898,16 +966,23 @@ CREATE TABLE IF NOT EXISTS insider_trades (
     last_updated TIMESTAMPTZ,
     PRIMARY KEY (ticker)
 )
-"""
+""",
 ```
 
-**Step 4 — Register the cache in `agent/cache/__init__.py` and `catalog.py`.**
+Since sessions are ephemeral temporary files (one per conversation, deleted on session close), there is no migration concern — each new session creates a fresh database from the current DDL. Restart the backend after this change so new sessions pick up the updated schema.
 
-Import and export the new cache class from `__init__.py`. Add calls to `your_cache.catalog_entry(conn, ticker)` and `your_cache.payload_entry(conn, ticker)` in `build_data_catalog` and `build_data_payload` respectively, following the pattern of existing entries.
+**Step B4 — Register the cache in `agent/cache/__init__.py` and `catalog.py`.**
 
-**Step 5 — Create the LangChain tool in `agent/tools/`.**
+Export the new class from `__init__.py`. Then add explicit calls in both functions inside `catalog.py`:
 
-Add a `@tool`-decorated function in `agent/tools/calculation.py` (for computed data) or `agent/tools/research.py` (for external data). The function must accept `session_id: Annotated[str, InjectedToolArg] = ""` as the last argument — the tools node injects this at call time.
+- In `build_data_catalog`: add `your_cache.catalog_entry(conn, ticker)` inside the per-ticker loop, following the pattern of the existing entries.
+- In `build_data_payload`: add `your_cache.payload_entry(conn, ticker)` inside the per-ticker loop.
+
+> **Warning — silent failure point.** Both `build_data_catalog` and `build_data_payload` are manually enumerated. If you create the cache class and the DuckDB table but forget to add one of these two calls, the tool will execute and write data to DuckDB correctly, but the response node will never receive that data. There is no error — the data is simply absent from the LLM's context. Double-check that both functions in `catalog.py` have been updated.
+
+**Step B5 — Create the LangChain tool in `agent/tools/research.py`.**
+
+Add a `@tool`-decorated function. The function must accept `session_id: Annotated[str, InjectedToolArg] = ""` as its last argument:
 
 ```python
 @tool
@@ -922,20 +997,47 @@ def get_insider_trades(
         result, was_cached = InsiderTradesCache.get_or_calculate(conn, ticker, days, session_id=session_id)
     finally:
         conn.close()
+    log_cache_status("get_insider_trades", was_cached, ticker=ticker)
     return result
 ```
 
-**Step 6 — Register the tool in `agent/tools/registry.py`.**
+**Step B6 — Register the tool in `agent/tools/registry.py`.**
 
-Add the new tool function to the `TOOLS_BY_NAME` dictionary and the `tools` list. The plan node builds its `ToolName` enum from `TOOLS_BY_NAME` automatically, so the LLM will see the new tool immediately.
+Import the function and add a `ToolSpec` entry to `TOOL_SPECS`. Use `phase=PHASE_RESEARCH` for external data sources:
 
-**Step 7 — Update the system prompts in `agent/prompts.py`.**
+```python
+ToolSpec(
+    tool=get_insider_trades,
+    group="insider_trades",
+    route="insider_trades",
+    capability="Pull recent insider buying and selling activity for a ticker over a configurable day window.",
+    phase=PHASE_RESEARCH,
+),
+```
 
-Add a description of the new tool to the relevant prompt sections (plan, react, response) so the LLM understands when and how to use it. The planner prompt should include a brief description of what the tool returns. The response prompt should include guidance on how to interpret and present the new data type.
+As in Path A, do not edit `TOOLS_BY_NAME` or `tools` directly — they are derived from `TOOL_SPECS` automatically.
 
-**Step 8 — Test via the CLI.**
+**Step B7 — Update `agent/prompts.py`.**
 
-Run `uv run python src/backend/agent/main.py` and ask a question that should trigger the new tool. Verify that the plan node includes it in the tool call list, the tools node executes it, and the response node incorporates the result.
+Add the new tool to `data_dictionary` with field-level guidance on what each returned value means, what it should and should not be used for, and any known data quality caveats. Additionally, add a brief description of the tool to the plan prompt's tool list so the planner knows when to invoke it. If the tool surfaces a genuinely new analytical dimension, add guidance to the response prompt on how to interpret and present it.
+
+---
+
+### Testing Either Path
+
+Run the CLI entry point and ask a question that should trigger the new tool:
+
+```bash
+cd backend
+uv run python src/backend/agent/main.py
+```
+
+Verify three things in order:
+1. The plan node includes the new tool in its tool call list (check the printed rationale).
+2. The tools node executes it without error (check logs for the cache status line).
+3. The response node incorporates the result (the answer references the new data).
+
+If step 3 fails but steps 1 and 2 succeed, the most likely cause is a missing entry in `build_data_payload` in `catalog.py`.
 
 ---
 
