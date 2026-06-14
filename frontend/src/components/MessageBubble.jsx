@@ -2,7 +2,7 @@ import React from 'react';
 import { Check, Copy, Download, Printer } from 'lucide-react';
 
 import ReportMarkdown, { isReportContent } from './ReportMarkdown.jsx';
-import { downloadReportHtml, printReport } from '../utils/reportExport.js';
+import { downloadReportPdf, printReport } from '../utils/reportExport.js';
 
 export default function MessageBubble({ message }) {
   const [copied, setCopied] = React.useState(false);
@@ -25,7 +25,7 @@ export default function MessageBubble({ message }) {
   }
 
   function downloadReport() {
-    downloadReportHtml(reportRef.current, message.content);
+    downloadReportPdf(reportRef.current, message.content);
     setDownloaded(true);
     window.setTimeout(() => setDownloaded(false), 1400);
   }
@@ -41,10 +41,10 @@ export default function MessageBubble({ message }) {
           <div className={isReport ? 'report-actions' : 'message-actions'}>
             {isReport && (
               <>
-                <button type="button" onClick={downloadReport} title="Download report">
+                <button type="button" onClick={downloadReport} title="Download report as PDF">
                   {downloaded ? <Check size={15} /> : <Download size={15} />}
                 </button>
-                <button type="button" onClick={saveReportAsPdf} title="Print or save as PDF">
+                <button type="button" onClick={saveReportAsPdf} title="Print report">
                   <Printer size={15} />
                 </button>
               </>
