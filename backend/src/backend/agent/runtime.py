@@ -44,7 +44,7 @@ async def activate_agent_async(
         result = await agent.ainvoke(initial_state(user_input, thread_id), config=config)
     
     #The last message of messages in the state is the LLM's response to the user
-    return result["messages"][-1].content
+    return result["dialogue"][-1].content
 
 
 def agent_config(thread_id: str, recursion_limit: int = DEFAULT_RECURSION_LIMIT):
@@ -67,7 +67,8 @@ def initial_state(user_input, session_id: str):
     The context prompt, the current year, the tools it has available and resets the value
     forced_response_due_to_recursion to False"""
     return {
-        "messages": [HumanMessage(content=user_input)],
+        "messages": [],
+        "dialogue": [HumanMessage(content=user_input)],
         "context": app_context,
         "current_year": date.today().year,
         "available_tools": AVAILABLE_TOOLS,

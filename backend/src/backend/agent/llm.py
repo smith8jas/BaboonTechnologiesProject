@@ -7,9 +7,33 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from backend.core.llm import NODE_PROVIDERS, get_node_model
 
-from .messages import messages_for_llm
+from .messages import current_tool_block, last_human_from_dialogue
 from .state import AgentState
 from .tools import tools
+
+# Message list each node receives. All message-routing policy lives here.
+_NODE_MESSAGES: dict[str, str] = {
+    "router":   "dialogue",
+    "plan":     "dialogue",
+    "react":    "last_human_and_tool_block",
+    "response": "dialogue_and_tool_block",
+    "judge":    "dialogue",
+    "scrape":   "none",
+}
+
+
+def _resolve_messages(state, node: str) -> list:
+    strategy = _NODE_MESSAGES.get(node, "dialogue")
+    if strategy == "dialogue":
+        return list(state.get("dialogue", []))
+    if strategy == "dialogue_and_tool_block":
+        return list(state.get("dialogue", [])) + current_tool_block(state)
+    if strategy == "last_human_and_tool_block":
+        human = last_human_from_dialogue(state)
+        block = current_tool_block(state)
+        return ([human] if human else []) + block
+    return []
+
 
 # Fields each node receives in runtime_context beyond current_year (always included).
 # All "who sees what" policy lives here — nodes just pass their name to invoke_llm*.
@@ -35,7 +59,7 @@ async def invoke_llm(
     model = get_node_model(node)
     if use_tools:
         model = model.bind_tools(tools)
-    msgs = messages if messages is not None else messages_for_llm(state)
+    msgs = messages if messages is not None else _resolve_messages(state, node)
     return await model.ainvoke([SystemMessage(content=system_blocks)] + msgs)
 
 
@@ -48,7 +72,7 @@ async def invoke_llm_structured(
 ) -> Any:
     system_blocks = build_system_prompt(state, prompt, node)
     model = get_node_model(node).with_structured_output(schema, method="function_calling")
-    msgs = messages if messages is not None else messages_for_llm(state)
+    msgs = messages if messages is not None else _resolve_messages(state, node)
     return await model.ainvoke([SystemMessage(content=system_blocks)] + msgs)
 
 

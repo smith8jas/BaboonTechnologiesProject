@@ -28,8 +28,7 @@ def get_income_statement_growth_rates(
     Calculate year-over-year income statement growth rates across the latest span fiscal periods.
 
     Covers revenue, gross profit, EBIT, and net income. All fields are historical
-    year-over-year percentage changes, not forward projections. Do not present these as
-    expected future performance or analyst forecasts.
+    percentage changes, not forward projections.
 
     Prerequisites: income statement values for ticker across span periods retrieved via
     get_financials(ticker, span).
@@ -53,8 +52,7 @@ def get_balance_sheet_growth_rates(
     Calculate year-over-year balance sheet growth rates across the latest span fiscal periods.
 
     Covers total assets, equity, debt, and working capital. All fields are historical
-    year-over-year percentage changes, not forward projections. Do not present these as
-    expected future performance or analyst forecasts.
+    percentage changes, not forward projections.
 
     Prerequisites: balance sheet values for ticker across span periods retrieved via
     get_financials(ticker, span).
@@ -124,8 +122,8 @@ def get_profitability_ratios(
     ROIC) across the latest span fiscal periods.
 
     Key output fields:
-        roe     High ROE driven by leverage is structurally different from high ROE driven by
-                operational efficiency. Always check solvency ratios alongside before concluding.
+        roe     Leverage-inflated ROE is structurally different from operationally driven ROE —
+                cross-check solvency before concluding.
         roic    Compare to WACC to assess value creation. ROIC below WACC means the business
                 is failing to earn its cost of capital regardless of absolute profitability.
 
@@ -155,9 +153,8 @@ def get_efficiency_ratios(
     Key output fields:
         dso   Rising DSO alongside revenue growth may indicate collection deterioration, not
               just growth scale. Check direction of change, not just level.
-        dpo   Rising DPO improves CCC mechanically but may strain supplier relationships.
-              CCC improvement driven by rising DPO is not equivalent to improvement driven
-              by faster collections (falling DSO).
+        dpo   Rising DPO improves CCC mechanically but may strain suppliers — not equivalent
+              to improvement via faster collections (falling DSO).
         ccc   Cash conversion cycle = DSO + DIO − DPO. Decompose into drivers before
               concluding.
 

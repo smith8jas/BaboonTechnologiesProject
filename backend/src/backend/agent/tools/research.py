@@ -21,9 +21,9 @@ def get_financials(
     """
     Pull historical income statement, balance sheet, and cash flow statement for a ticker.
 
-    All values are historical actuals, not projections. Returns a list of annual fiscal periods
-    sorted newest-first; each period contains income_statement, balance_sheet, and cash_flow
-    sub-objects plus a fiscal_year field. Filter on fiscal_year to access a specific year.
+    All values are historical actuals, not projections. Fetches and caches annual fiscal periods
+    sorted newest-first; each cached period contains sub-objects for each statement plus a
+    fiscal_year field, accessible to calculation tools by fiscal_year.
 
     Args:
         ticker: Stock ticker symbol (e.g. "AAPL").
@@ -78,18 +78,16 @@ def get_market_data(
         include_rfr: If True, also fetch the FRED DGS10 10-year Treasury yield as risk-free rate.
 
     Key output fields:
-        current_price        Current stock price. Use for: intrinsic value comparison, per-share
-                             context. Not for: measuring operational or business performance.
-        market_cap           Total equity market value (price × shares). Use for: WACC equity
-                             weight, size context. Not for: evidence of competitive dominance or
-                             market share.
-        beta                 Historical price covariance with the market index. Use for: CAPM
-                             cost of equity. Not for: direct assessment of business or
-                             operational risk.
-        risk_free_rate       Current 10-year Treasury yield (FRED DGS10). Use for: WACC
-                             risk-free component only. Not for: macroeconomic analysis.
-        shares_outstanding   Diluted share count. Use for: per-share calculations, dilution
-                             tracking. Not for: workforce or operational scale.
+        current_price        Current stock price. Intrinsic value comparison and per-share
+                             context; not for operational performance measurement.
+        market_cap           Total equity market value (price × shares). WACC equity weight
+                             and size context; not a proxy for competitive position.
+        beta                 Historical price covariance with the market index. CAPM cost of
+                             equity input; not for direct business or operational risk assessment.
+        risk_free_rate       Current 10-year Treasury yield (FRED DGS10). WACC risk-free
+                             component only; not for macroeconomic analysis.
+        shares_outstanding   Diluted share count. Per-share calculations and dilution tracking;
+                             not for workforce or operational scale.
     """
     conn = open_connection(session_id)
     try:
@@ -150,9 +148,7 @@ def scrape_web(
 
     The only tool that provides forward-looking, qualitative, or event-specific information.
     No other tool contains recent news, earnings guidance, analyst commentary, product pipeline,
-    regulatory developments, or management statements. When the question is forward-looking,
-    scrape_web is required — get_market_data and get_sector_data contain no forward-looking
-    information and cannot substitute for it.
+    regulatory developments, or management statements.
 
     Do not use to retrieve numbers already available through financial statement tools.
 
@@ -161,10 +157,8 @@ def scrape_web(
         max_results: Number of pages to scrape per search query (default 3).
 
     Key output fields:
-        confidence    Scrape quality score (0–1). Treat results below 0.5 as low confidence —
+        confidence    Scrape quality score (0–1). Treat results below 0.6 as low confidence —
                       mention the limitation when citing them.
-        source_type   Inferred source category. Prefer earnings press releases and SEC filings
-                      over generic news when citing financial figures.
     """
     results = search_and_scrape(topic, int(max_results))
     log_cache_status("scrape_web", False, topic=topic)
