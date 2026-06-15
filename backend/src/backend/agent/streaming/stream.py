@@ -78,7 +78,7 @@ async def activate_agent_stream_async(
         return
 
     result = (await agent.aget_state(config)).values
-    final_message = result.get("messages", [])[-1] if result.get("messages") else None
+    final_message = result.get("dialogue", [])[-1] if result.get("dialogue") else None
     fallback = getattr(final_message, "content", "")
     if fallback:
         yield fallback
@@ -143,7 +143,7 @@ async def activate_agent_stream_events_async(
         return
 
     result = (await agent.aget_state(config)).values
-    final_message = result.get("messages", [])[-1] if result.get("messages") else None
+    final_message = result.get("dialogue", [])[-1] if result.get("dialogue") else None
     fallback = getattr(final_message, "content", "")
     if fallback:
         yield {"type": "delta", "content": fallback}

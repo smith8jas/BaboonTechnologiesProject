@@ -17,7 +17,6 @@ class ToolSpec:
     tool: Any
     group: str
     route: str
-    capability: str
     phase: str
 
     @property
@@ -29,7 +28,6 @@ class ToolSpec:
         return {
             "group": self.group,
             "route": self.route,
-            "capability": self.capability,
             "phase": self.phase,
         }
 

@@ -12,6 +12,14 @@ from .base import CacheHelpers
 from .financials import FinancialsCache
 from .session import get_session_cycle, now
 
+_RATIO_SUMMARIES = {
+    "liquidity":     "Current ratio, quick ratio, cash ratio",
+    "solvency":      "Debt-to-equity, debt-to-assets, interest coverage",
+    "profitability": "Gross profit margin, EBIT margin, net profit margin",
+    "efficiency":    "DSO, DIO, DPO",
+}
+
+
 class RatiosCache:
     catalog_key = "ratios"
     catalog_category = "calculated"
@@ -42,7 +50,7 @@ class RatiosCache:
         if row and int(row[0] or 0) >= span:
             return json.loads(row[1]), True
 
-        hf, _ = FinancialsCache.get_or_fetch(conn, t, span, session_id=session_id)
+        hf = FinancialsCache.get_from_db(conn, t, span)
         fn = RatiosCache._RATIO_FUNCS.get(ratio_type)
         if fn is None:
             raise ValueError(f"Unknown ratio type: {ratio_type!r}. Valid: {sorted(RatiosCache._RATIO_FUNCS)}")
@@ -66,7 +74,14 @@ class RatiosCache:
         rows = conn.fetchall()
         if not rows:
             return None
-        return {r[0]: {"available": True, "span": r[1]} for r in rows}
+        return {
+            r[0]: {
+                "available": True,
+                "span": r[1],
+                "summary": f"{_RATIO_SUMMARIES.get(r[0], r[0])} — {r[1]} periods.",
+            }
+            for r in rows
+        }
 
     @staticmethod
     def payload_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:

@@ -10,7 +10,7 @@ import duckdb
 from backend.processing.schema import HistoricalFinancials
 from backend.services import financials as financials_service
 
-from .base import CacheHelpers
+from .base import CacheMissError, CacheHelpers
 from .session import get_session_cycle, now
 
 
@@ -120,12 +120,27 @@ class FinancialsCache:
             FinancialsCache._store(conn, hf, int(needed_span), session_id)
             return FinancialsCache._filter_by_years(hf, fiscal_years), False
 
-        if FinancialsCache._has(conn, t, span):
-            return FinancialsCache._from_db(conn, t, span), True
+        try:
+            return FinancialsCache.get_from_db(conn, t, span), True
+        except CacheMissError:
+            hf = financials_service.get_cached_financials(t, int(span))
+            FinancialsCache._store(conn, hf, int(span), session_id)
+            return hf, False
 
-        hf = financials_service.get_cached_financials(t, int(span))
-        FinancialsCache._store(conn, hf, int(span), session_id)
-        return hf, False
+    @staticmethod
+    def get_from_db(
+        conn: duckdb.DuckDBPyConnection,
+        ticker: str,
+        span: int = 5,
+    ) -> HistoricalFinancials:
+        """Read financials from DuckDB only. Raises CacheMissError if not cached."""
+        t = CacheHelpers.ticker(ticker)
+        if not FinancialsCache._has(conn, t, span):
+            raise CacheMissError(
+                f"Financials for {t} (span={span}) not in session cache — "
+                "call get_financials before any calculation tool."
+            )
+        return FinancialsCache._from_db(conn, t, span)
 
     @staticmethod
     def _has(conn: duckdb.DuckDBPyConnection, ticker: str, span: int) -> bool:
@@ -255,10 +270,7 @@ class FinancialsCache:
             "fiscal_years": fiscal_years,
             "period_ends": period_ends,
             "max_span": len(fiscal_years),
-            "summary": (
-                f"Historical financials for {t} available for "
-                f"{fiscal_years[0]}–{fiscal_years[-1]}."
-            ),
+            "summary": f"Income statement, balance sheet, and cash flow statement for {t} — {fiscal_years[0]}–{fiscal_years[-1]} ({len(fiscal_years)} periods).",
         }
 
     @staticmethod

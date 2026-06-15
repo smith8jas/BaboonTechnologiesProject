@@ -7,18 +7,41 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from backend.core.llm import NODE_PROVIDERS, get_node_model
 
-from .messages import messages_for_llm
-from .prompts import data_dictionary
+from .messages import current_tool_block, last_human_from_dialogue
 from .state import AgentState
 from .tools import tools
+
+# Message list each node receives. All message-routing policy lives here.
+_NODE_MESSAGES: dict[str, str] = {
+    "router":   "dialogue",
+    "plan":     "dialogue",
+    "react":    "last_human_and_tool_block",
+    "response": "dialogue_and_tool_block",
+    "judge":    "dialogue",
+    "scrape":   "none",
+}
+
+
+def _resolve_messages(state, node: str) -> list:
+    strategy = _NODE_MESSAGES.get(node, "dialogue")
+    if strategy == "dialogue":
+        return list(state.get("dialogue", []))
+    if strategy == "dialogue_and_tool_block":
+        return list(state.get("dialogue", [])) + current_tool_block(state)
+    if strategy == "last_human_and_tool_block":
+        human = last_human_from_dialogue(state)
+        block = current_tool_block(state)
+        return ([human] if human else []) + block
+    return []
+
 
 # Fields each node receives in runtime_context beyond current_year (always included).
 # All "who sees what" policy lives here — nodes just pass their name to invoke_llm*.
 _NODE_CONTEXT: dict[str, set[str]] = {
     "router":   {"available_tools", "previous_depth"},
-    "plan":     {"available_tools"},
+    "plan":     {"available_tools", "cached_data_catalog"},
     "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale"},
-    "response": {"cached_data_catalog", "scrape_history", "forced_response_due_to_recursion"},
+    "response": {"available_tools", "cached_data_catalog", "scrape_history", "forced_response_due_to_recursion"},
     "judge":    set(),
     "scrape":   {"scrape_history"},
 }
@@ -36,7 +59,7 @@ async def invoke_llm(
     model = get_node_model(node)
     if use_tools:
         model = model.bind_tools(tools)
-    msgs = messages if messages is not None else messages_for_llm(state)
+    msgs = messages if messages is not None else _resolve_messages(state, node)
     return await model.ainvoke([SystemMessage(content=system_blocks)] + msgs)
 
 
@@ -49,7 +72,7 @@ async def invoke_llm_structured(
 ) -> Any:
     system_blocks = build_system_prompt(state, prompt, node)
     model = get_node_model(node).with_structured_output(schema, method="function_calling")
-    msgs = messages if messages is not None else messages_for_llm(state)
+    msgs = messages if messages is not None else _resolve_messages(state, node)
     return await model.ainvoke([SystemMessage(content=system_blocks)] + msgs)
 
 
@@ -88,7 +111,6 @@ def build_system_prompt(
 
     stable = (
         f"\n    Universal agent instructions:\n    {state.get('context', '')}\n\n"
-        f"    Data dictionary:\n    {data_dictionary}\n\n"
         f"    Node instructions:\n    {node_prompt}"
     )
     volatile = f"\n\n    Runtime context:\n    {json.dumps(context, indent=2, default=str)}\n    "

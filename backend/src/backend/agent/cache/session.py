@@ -204,6 +204,17 @@ def _build_ddl() -> tuple[str, ...]:
         PRIMARY KEY (ticker, method)
     )
     """,
+
+        """
+    CREATE TABLE IF NOT EXISTS damodaran_sector (
+        industry     VARCHAR PRIMARY KEY,
+        ev_sales     DOUBLE,
+        price_sales  DOUBLE,
+        trailing_pe  DOUBLE,
+        cycle        INTEGER DEFAULT 0,
+        last_updated TIMESTAMPTZ
+    )
+    """,
     )
 
 
@@ -293,6 +304,7 @@ def purge_old_data(session_id: str, current_cycle: int) -> None:
             conn.execute("DELETE FROM financials WHERE cycle <= ?", [search_threshold])
             conn.execute("DELETE FROM market_data WHERE cycle <= ?", [search_threshold])
             conn.execute("DELETE FROM sector_data WHERE cycle <= ?", [search_threshold])
+            conn.execute("DELETE FROM damodaran_sector WHERE cycle <= ?", [search_threshold])
             conn.execute("""
                 DELETE FROM companies
                 WHERE ticker NOT IN (SELECT ticker FROM financials)

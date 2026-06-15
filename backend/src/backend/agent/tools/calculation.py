@@ -24,7 +24,15 @@ def get_income_statement_growth_rates(
     span: int = 5,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Calculate year-over-year income statement growth rates across the latest span fiscal periods."""
+    """
+    Calculate year-over-year income statement growth rates across the latest span fiscal periods.
+
+    Covers revenue, gross profit, EBIT, and net income. All fields are historical
+    percentage changes, not forward projections.
+
+    Prerequisites: income statement values for ticker across span periods retrieved via
+    get_financials(ticker, span).
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_INCOME_STATEMENT, session_id=session_id)
@@ -40,7 +48,15 @@ def get_balance_sheet_growth_rates(
     span: int = 5,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Calculate year-over-year balance sheet growth rates across the latest span fiscal periods."""
+    """
+    Calculate year-over-year balance sheet growth rates across the latest span fiscal periods.
+
+    Covers total assets, equity, debt, and working capital. All fields are historical
+    percentage changes, not forward projections.
+
+    Prerequisites: balance sheet values for ticker across span periods retrieved via
+    get_financials(ticker, span).
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = GrowthCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_BALANCE_SHEET, session_id=session_id)
@@ -56,7 +72,13 @@ def get_liquidity_ratios(
     span: int = 5,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Calculate liquidity ratios across the latest span fiscal periods."""
+    """
+    Calculate liquidity ratios (current ratio, quick ratio, cash ratio) across the latest
+    span fiscal periods.
+
+    Prerequisites: balance sheet values (current assets, current liabilities, cash) for ticker
+    across span periods retrieved via get_financials(ticker, span).
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_LIQUIDITY, session_id=session_id)
@@ -72,7 +94,14 @@ def get_solvency_ratios(
     span: int = 5,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Calculate solvency ratios across the latest span fiscal periods."""
+    """
+    Calculate solvency ratios (debt-to-equity, debt-to-assets, interest coverage) across the
+    latest span fiscal periods.
+
+    Prerequisites: income statement (EBIT, interest expense) and balance sheet (total debt,
+    total assets, equity) values for ticker across span periods retrieved via
+    get_financials(ticker, span).
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_SOLVENCY, session_id=session_id)
@@ -88,7 +117,20 @@ def get_profitability_ratios(
     span: int = 5,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Calculate profitability ratios across the latest span fiscal periods."""
+    """
+    Calculate profitability ratios (gross profit margin, EBIT margin, net profit margin, ROE,
+    ROIC) across the latest span fiscal periods.
+
+    Key output fields:
+        roe     Leverage-inflated ROE is structurally different from operationally driven ROE —
+                cross-check solvency before concluding.
+        roic    Compare to WACC to assess value creation. ROIC below WACC means the business
+                is failing to earn its cost of capital regardless of absolute profitability.
+
+    Prerequisites: income statement (revenue, gross profit, EBIT, net income) and balance sheet
+    (total assets, equity, invested capital) values for ticker across span periods retrieved via
+    get_financials(ticker, span).
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_PROFITABILITY, session_id=session_id)
@@ -104,7 +146,22 @@ def get_efficiency_ratios(
     span: int = 5,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Calculate working capital efficiency ratios across the latest span fiscal periods."""
+    """
+    Calculate working capital efficiency ratios (DSO, DIO, DPO, CCC) across the latest span
+    fiscal periods.
+
+    Key output fields:
+        dso   Rising DSO alongside revenue growth may indicate collection deterioration, not
+              just growth scale. Check direction of change, not just level.
+        dpo   Rising DPO improves CCC mechanically but may strain suppliers — not equivalent
+              to improvement via faster collections (falling DSO).
+        ccc   Cash conversion cycle = DSO + DIO − DPO. Decompose into drivers before
+              concluding.
+
+    Prerequisites: income statement (revenue, COGS) and balance sheet (accounts receivable,
+    inventory, accounts payable) values for ticker across span periods retrieved via
+    get_financials(ticker, span).
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = RatiosCache.get_or_calculate(conn, ticker, int(span), SUBDOMAIN_EFFICIENCY, session_id=session_id)
@@ -121,7 +178,34 @@ def run_dcf_valuation(
     year: int = 0,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Run a full DCF valuation for a public company ticker."""
+    """
+    Run a full DCF valuation for a public company ticker.
+
+    Prerequisites:
+        - Financial statement values for ticker across span periods retrieved via
+          get_financials(ticker, span).
+        - Current price, beta, shares outstanding, and risk-free rate retrieved via
+          get_market_data(ticker, include_rfr=True).
+        - Equity risk premium and terminal growth rate for year retrieved via
+          get_sector_data(year).
+
+    Key output fields:
+        intrinsic_value_per_share      Model estimate, not a fact. Sensitive to WACC and
+                                       terminal growth assumptions — present as a range, not
+                                       a precise target.
+        tv_pct_of_ev                   Terminal value as % of enterprise value. Values above
+                                       70% indicate the valuation is driven by long-run
+                                       assumptions, not near-term cash flows, increasing
+                                       model sensitivity.
+        projected_da                   If all values are zero, depreciation_amortization was
+                                       None in the source data. UFCF and enterprise value are
+                                       understated — flag this limitation explicitly.
+        falled_back_to_risk_free_rate  If true: cost of debt could not be derived from
+                                       financial statements and was estimated as risk-free
+                                       rate + 150bps. WACC and all downstream valuation
+                                       outputs carry additional model risk — state this
+                                       explicitly when reporting results.
+    """
     year = year or date.today().year
     conn = open_connection(session_id)
     try:
@@ -150,7 +234,7 @@ def run_dcf_valuation(
         "equity_value": result.get("equity_value"),
         "intrinsic_value_per_share": result.get("intrinsic_value_per_share"),
         "falled_back_to_risk_free_rate": result.get("falled_back_to_risk_free_rate"),
-        "wacc": result.get("wacc"),               # ← still need to add these
+        "wacc": result.get("wacc"),
         "terminal_growth": result.get("terminal_growth"),
         "wacc_components": {
             "cost_of_equity": result.get("cost_of_equity"),
@@ -162,7 +246,6 @@ def run_dcf_valuation(
             "equity_weight": result.get("equity_weight"),
             "debt_weight": result.get("debt_weight"),
         },
-        "terminal_growth": result.get("terminal_growth"),
     }
 
 
@@ -175,13 +258,18 @@ def get_comps_valuation(
     """
     Comparable company valuation for a given ticker.
 
-    - With peers: computes P/E, EV/EBITDA, EV/Sales, P/S, P/B against
-      the supplied peer tickers and returns an implied equity value band.
-    - Without peers: falls back to Damodaran sector median multiples
-      (EV/Sales, P/S, Trailing PE) derived from the company's SIC code.
+    With peers: computes P/E, EV/EBITDA, EV/Sales, P/S, P/B multiples against the supplied
+    peer tickers and returns an implied equity value band.
+    Prerequisites: financial statement values and current market data for ticker and each peer
+    retrieved via get_financials(ticker, span) and get_market_data(ticker) for each.
 
-    Always returns a value band, never a single point estimate.
-    Does not issue Buy / Hold / Sell recommendations.
+    Without peers: falls back to Damodaran sector median multiples (EV/Sales, P/S, Trailing PE)
+    derived from the company's SIC code.
+    Prerequisites: financial statement values and current market data for ticker retrieved via
+    get_financials(ticker, span) and get_market_data(ticker).
+
+    Always returns a value band, never a single point estimate. Does not issue Buy / Hold /
+    Sell recommendations.
 
     Args:
         ticker: Target company ticker (e.g. "AAPL").

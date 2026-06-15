@@ -15,6 +15,15 @@ def tool_content(payload: Any) -> str:
     return json.dumps(payload, default=str)
 
 
+class CacheMissError(RuntimeError):
+    """Raised when a calculation cache requires data not yet in DuckDB.
+
+    Signals that the corresponding research tool was not called before this
+    calculation tool — a planning error that should surface explicitly rather
+    than silently trigger an external fetch.
+    """
+
+
 class CacheHelpers:
     @staticmethod
     def ticker(ticker: str) -> str:

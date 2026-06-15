@@ -61,7 +61,7 @@ class CompsCache:
         if row:
             return json.loads(row[0]), True
 
-        payload = comparables_service.damodaran_fallback(conn, t)
+        payload = comparables_service.damodaran_fallback(conn, t, session_id=session_id)
 
         conn.execute("""
             INSERT OR REPLACE INTO comparables
@@ -75,13 +75,30 @@ class CompsCache:
     def catalog_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:
         t = CacheHelpers.ticker(ticker)
         conn.execute(
-            "SELECT method FROM comparables WHERE ticker = ?",
+            "SELECT method, payload FROM comparables WHERE ticker = ?",
             [t],
         )
         rows = conn.fetchall()
         if not rows:
             return None
-        return {r[0]: {"available": True} for r in rows}
+        result = {}
+        for method, payload_json in rows:
+            payload = json.loads(payload_json) if payload_json else {}
+            value_band = payload.get("value_band", {})
+            low = value_band.get("low")
+            high = value_band.get("high")
+            band_str = f"${low:.2f}–${high:.2f}/share" if low is not None and high is not None else "N/A"
+            if method == "peer":
+                peers_used = payload.get("peers_used", [])
+                peers_str = ", ".join(peers_used) if peers_used else "N/A"
+                summary = f"Peer comps vs {peers_str} — implied value band: {band_str}."
+            elif method == "damodaran":
+                industry = payload.get("industry", "N/A")
+                summary = f"Damodaran sector median ({industry}) — implied value band: {band_str}."
+            else:
+                summary = f"{method} comparable valuation available."
+            result[method] = {"available": True, "summary": summary}
+        return result
 
     @staticmethod
     def payload_entry(conn: duckdb.DuckDBPyConnection, ticker: str) -> dict | None:

@@ -42,7 +42,7 @@ async def router(state: AgentState):
     #If anything fails it sets routes the process to the end of the graph and prints ("I could not route the request reliably: "error details")
     except Exception as exc:
         return {
-            "messages": [AIMessage(content=f"I could not route the request reliably: {exc}")],
+            "dialogue": [AIMessage(content=f"I could not route the request reliably: {exc}")],
             "router_route": "end",
             "deep_plan": False,
             "query_count": query_count,
@@ -57,7 +57,7 @@ async def router(state: AgentState):
     #Sets path to end if router dit not choose plan and either prints an llm response or a premade response.
     answer = decision.answer or "I can help with public-company valuation and financial analysis. What company or ticker would you like to analyze?"
     return {
-        "messages": [AIMessage(content=answer)],
+        "dialogue": [AIMessage(content=answer)],
         "router_route": "end",
         "deep_plan": False,
         "query_count": query_count,

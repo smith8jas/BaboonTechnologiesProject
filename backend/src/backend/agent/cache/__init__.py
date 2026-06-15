@@ -17,6 +17,7 @@ Layout:
 from .base import CacheHelpers, tool_content
 from .catalog import COMPANY_TOOL_CACHES, build_data_catalog, build_data_payload
 from .comparables import CompsCache
+from .damodaran import DamodaranSectorCache
 from .dcf import DCFCache
 from .financials import FinancialsCache
 from .growth import GrowthCache
@@ -28,6 +29,7 @@ __all__ = [
     "CacheHelpers",
     "COMPANY_TOOL_CACHES",
     "CompsCache",
+    "DamodaranSectorCache",
     "DCFCache",
     "FinancialsCache",
     "GrowthCache",

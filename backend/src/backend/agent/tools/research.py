@@ -19,7 +19,11 @@ def get_financials(
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
-    Pull, normalize, and validate historical financials for a ticker.
+    Pull historical income statement, balance sheet, and cash flow statement for a ticker.
+
+    All values are historical actuals, not projections. Fetches and caches annual fiscal periods
+    sorted newest-first; each cached period contains sub-objects for each statement plus a
+    fiscal_year field, accessible to calculation tools by fiscal_year.
 
     Args:
         ticker: Stock ticker symbol (e.g. "AAPL").
@@ -28,8 +32,20 @@ def get_financials(
         fiscal_years: Explicit list of fiscal years to retrieve (e.g. [2021, 2022]). When given,
                       only those years are returned and the cache is checked by year instead of span.
 
-    Returns:
-        {"source": "cache" | "external", "data": HistoricalFinancials payload}
+    Key output fields:
+        income_statement.interest_expense       May be None — use falled_back_to_risk_free_rate
+                                                in DCF output to detect when cost of debt was
+                                                estimated rather than derived.
+        income_statement.depreciation_expense   D&A from income statement; may be None due to
+                                                XBRL extraction gaps.
+        cash_flow.depreciation_amortization     D&A from cash flow statement; may be None. If
+                                                None, DCF D&A projection defaults to zero,
+                                                understating UFCF and enterprise value.
+        cash_flow.cfo                           Operating cash flow. Always compare to net income
+                                                to confirm earnings quality.
+        cash_flow.fcf                           Computed: CFO minus CapEx. Null if either input
+                                                is missing.
+        balance_sheet.net_working_capital       Computed: current assets minus current liabilities.
     """
     conn = open_connection(session_id)
     try:
@@ -52,14 +68,26 @@ def get_market_data(
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
-    Pull market data (price, beta, shares, market cap) and optional risk-free rate.
+    Pull current market data (price, beta, shares, market cap) and optional risk-free rate.
+
+    These are trading metrics and WACC inputs — they describe how the stock is priced by the
+    market, not how the business operates or competes.
 
     Args:
         ticker: Stock ticker symbol.
-        include_rfr: If True, fetch FRED DGS10 risk-free rate.
+        include_rfr: If True, also fetch the FRED DGS10 10-year Treasury yield as risk-free rate.
 
-    Returns:
-        {"source": "cache" | "external", "data": MarketData payload}
+    Key output fields:
+        current_price        Current stock price. Intrinsic value comparison and per-share
+                             context; not for operational performance measurement.
+        market_cap           Total equity market value (price × shares). WACC equity weight
+                             and size context; not a proxy for competitive position.
+        beta                 Historical price covariance with the market index. CAPM cost of
+                             equity input; not for direct business or operational risk assessment.
+        risk_free_rate       Current 10-year Treasury yield (FRED DGS10). WACC risk-free
+                             component only; not for macroeconomic analysis.
+        shares_outstanding   Diluted share count. Per-share calculations and dilution tracking;
+                             not for workforce or operational scale.
     """
     conn = open_connection(session_id)
     try:
@@ -82,7 +110,19 @@ def get_sector_data(
     year: int,
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
-    """Pull sector-level financial assumptions for a given year."""
+    """
+    Pull sector-level WACC and DCF model parameters for a given year.
+
+    These are model inputs, not sector analysis outputs.
+
+    Key output fields:
+        equity_risk_premium    Market-wide excess return assumption. Use for: CAPM / WACC only.
+                               Not for: company-specific or sector-specific outlook.
+        long_term_growth_rate  GDP-proxy terminal growth assumption (hardcoded at 2.5%). Use
+                               for: DCF terminal value only. Not for: company-specific growth
+                               forecasts or analyst consensus. This is a model floor, not a
+                               prediction.
+    """
     conn = open_connection(session_id)
     try:
         result, was_cached = SectorDataCache.get_or_fetch(conn, year, session_id=session_id)
@@ -104,17 +144,21 @@ def scrape_web(
     session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
-    Search the web for recent news, events, or public information on a financial topic.
-    Use for context not available in financial statements: recent earnings announcements,
-    guidance updates, product launches, regulatory events, or analyst commentary.
+    Search the web for recent news, events, or qualitative context on a financial topic.
+
+    The only tool that provides forward-looking, qualitative, or event-specific information.
+    No other tool contains recent news, earnings guidance, analyst commentary, product pipeline,
+    regulatory developments, or management statements.
+
     Do not use to retrieve numbers already available through financial statement tools.
 
     Args:
         topic: Description of what to search for (e.g. "Apple Q1 2025 earnings guidance").
         max_results: Number of pages to scrape per search query (default 3).
 
-    Returns:
-        {"source": "web", "data": [{"url", "title", "snippet", "confidence"}, ...]}
+    Key output fields:
+        confidence    Scrape quality score (0–1). Treat results below 0.6 as low confidence —
+                      mention the limitation when citing them.
     """
     results = search_and_scrape(topic, int(max_results))
     log_cache_status("scrape_web", False, topic=topic)

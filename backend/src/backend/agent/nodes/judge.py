@@ -3,12 +3,11 @@
 import logging
 from typing import Literal
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
 from ..constants import JUDGE_LIMIT, REACT_LIMIT
 from ..llm import invoke_llm_structured
-from ..messages import messages_for_llm
 from ..prompts import judge_prompt
 from ..state import AgentState
 
@@ -37,20 +36,17 @@ async def judge_node(state: AgentState):
         }
         current_response = state.get("current_response", "")
         if current_response:
-            result["messages"] = [AIMessage(content=current_response)]
+            result["dialogue"] = [AIMessage(content=current_response)]
         return result
     
-    #Build judge's focused message list: all human messages + current_response in system prompt
     local_prompt = judge_prompt
     current_response = state.get("current_response", "")
     if current_response:
         local_prompt += f"\n\nResponse being evaluated:\n{current_response}"
-    human_messages = [m for m in messages_for_llm(state) if isinstance(m, HumanMessage)]
 
-    #Invokes llm call with prompt to fill in JudgeDecision
     try:
         decision: JudgeDecision = await invoke_llm_structured(
-            state, local_prompt, JudgeDecision, node="judge", messages=human_messages
+            state, local_prompt, JudgeDecision, node="judge"
         )
     except Exception as exc:
         logger.warning("Judge structured output failed: %s", exc)
@@ -65,9 +61,8 @@ async def judge_node(state: AgentState):
         "judge_rationale": decision.rationale,
     }
 
-    # On approval, re-append current_response so it is always messages[-1] at END.
     if decision.verdict == "end" and current_response:
-        result["messages"] = [AIMessage(content=current_response)]
+        result["dialogue"] = [AIMessage(content=current_response)]
 
     # Revise always routes to react — extend its limit if it's near the cap.
     if decision.verdict == "revise":
