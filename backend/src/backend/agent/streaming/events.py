@@ -36,7 +36,7 @@ def events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
         if route == "plan_node":
             events.append({"type": "thought", "content": "Identified as a financial analysis request"})
         else:
-            for msg in messages:
+            for msg in state_update.get("dialogue", []):
                 content = getattr(msg, "content", "")
                 if content:
                     events.append({"type": "delta", "content": content})
