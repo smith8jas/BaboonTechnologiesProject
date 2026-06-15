@@ -1,0 +1,59 @@
+"""Tool registry: binds every tool to its agent metadata in one place.
+
+Adding a tool:
+    1. Implement it in research.py (external data) or calculation.py (derived data).
+    2. Append a ToolSpec entry below. Nothing else needs to change — the graph,
+       prompts, and streaming labels all read from this registry.
+"""
+
+from .base import PHASE_CALCULATION, PHASE_RESEARCH, ToolSpec, apply_tool_spec
+from .calculation import (
+    get_balance_sheet_growth_rates,
+    get_comps_valuation,
+    get_efficiency_ratios,
+    get_income_statement_growth_rates,
+    get_liquidity_ratios,
+    get_profitability_ratios,
+    get_solvency_ratios,
+    run_dcf_valuation,
+)
+from .research import get_financials, get_market_data, get_sector_data, scrape_web
+
+TOOL_SPECS = [
+    ToolSpec(tool=get_financials,                   group="financial_statement", route="financials",   phase=PHASE_RESEARCH),
+    ToolSpec(tool=get_market_data,                  group="market_data",         route="market_data",  phase=PHASE_RESEARCH),
+    ToolSpec(tool=get_sector_data,                  group="sector_data",         route="sector_data",  phase=PHASE_RESEARCH),
+    ToolSpec(tool=get_income_statement_growth_rates, group="growth_rate",        route="growth_rates", phase=PHASE_CALCULATION),
+    ToolSpec(tool=get_balance_sheet_growth_rates,   group="growth_rate",         route="growth_rates", phase=PHASE_CALCULATION),
+    ToolSpec(tool=get_liquidity_ratios,             group="ratio",               route="ratios",       phase=PHASE_CALCULATION),
+    ToolSpec(tool=get_solvency_ratios,              group="ratio",               route="ratios",       phase=PHASE_CALCULATION),
+    ToolSpec(tool=get_profitability_ratios,         group="ratio",               route="ratios",       phase=PHASE_CALCULATION),
+    ToolSpec(tool=get_efficiency_ratios,            group="ratio",               route="ratios",       phase=PHASE_CALCULATION),
+    ToolSpec(tool=run_dcf_valuation,                group="dcf",                 route="dcf",          phase=PHASE_CALCULATION),
+    ToolSpec(tool=scrape_web,                       group="web_scrape",          route="scrape",       phase=PHASE_RESEARCH),
+    ToolSpec(tool=get_comps_valuation,              group="comparables",         route="comparables",  phase=PHASE_CALCULATION),
+]
+
+tools = [apply_tool_spec(spec) for spec in TOOL_SPECS]
+
+TOOLS_BY_NAME = {tool.name: tool for tool in tools}
+
+
+def serialize_tools():
+    """Expose tool metadata to prompts without leaking LangChain internals."""
+    serialized = {"research": [], "calculation": []}
+    for tool in tools:
+        metadata = (getattr(tool, "metadata", None) or {}).get("agent", {})
+        phase = metadata.get("phase", "calculation")
+        entry = {
+            "name": tool.name,
+            "description": getattr(tool, "description", "") or "",
+            "args": getattr(tool, "args", {}) or {},
+            "metadata": metadata,
+        }
+        serialized.setdefault(phase, []).append(entry)
+
+    return serialized
+
+
+AVAILABLE_TOOLS = serialize_tools()

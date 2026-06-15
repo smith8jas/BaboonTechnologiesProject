@@ -63,7 +63,7 @@ def get_company_dcf(
     md = financials.get_market_data(symbol)
     sd = financials.get_sector_data(resolved_year)
     assumptions = dcf_engine.build_assumptions(hf, md, sd)
-    valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd)
+    valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
     valuation = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
 
     return DCFResponse(

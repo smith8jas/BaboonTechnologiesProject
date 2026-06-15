@@ -16,8 +16,11 @@ class Settings(BaseSettings):
     edgar_user_agent: str
     fred_api_key: str
     openai_api_key: str
-    llm_provider: str
-    llm_model: str
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    supabase_url: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_service_role_key: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

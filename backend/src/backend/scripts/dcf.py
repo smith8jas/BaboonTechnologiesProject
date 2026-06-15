@@ -33,7 +33,7 @@ def main():
 
     # ── 3. Valuation inputs ───────────────────────────────────────────────
     section("3. Valuation Inputs")
-    vi = build_valuation_inputs(hf, md, sd)
+    vi = build_valuation_inputs(hf, md, sd, a)
     print(f"  {'Beta:':<26} {vi.beta:.3f}")
     print(f"  {'Risk-free rate:':<26} {fmt_pct(vi.risk_free_rate)}")
     print(f"  {'ERP:':<26} {fmt_pct(vi.equity_risk_premium)}")
@@ -79,11 +79,10 @@ def main():
 
     # ── 7. Valuation bridge ───────────────────────────────────────────────
     section("7. Valuation Bridge")
-    equity_value = r.enterprise_value - vi.total_debt
     updown = r.intrinsic_value_per_share / md.current_price - 1
     print(f"  {'Enterprise value:':<26} {r.enterprise_value/1e9:>10,.1f}B")
     print(f"  {'Less: total debt:':<26} {vi.total_debt/1e9:>10,.1f}B")
-    print(f"  {'Equity value:':<26} {equity_value/1e9:>10,.1f}B")
+    print(f"  {'Equity value:':<26} {r.equity_value/1e9:>10,.1f}B")
     print(f"  {'Shares outstanding:':<26} {vi.shares_outstanding/1e9:>10,.2f}B")
     print(f"  {'─'*40}")
     print(f"  {'Intrinsic value/share:':<26} ${r.intrinsic_value_per_share:>9,.2f}")

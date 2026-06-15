@@ -174,6 +174,7 @@ def main():
     print(f"  Period end:               {latest.period_end}")
     print(f"  Revenue:                  {fmt_money(latest.income_statement.revenue)}")
     print(f"  EBIT:                     {fmt_money(latest.income_statement.ebit)}")
+    print(f"  EBITDA:                   {fmt_money(latest.income_statement.ebitda)}")
     print(f"  Net income:               {fmt_money(latest.income_statement.net_income)}")
     print(f"  Total assets:             {fmt_money(latest.balance_sheet.total_assets)}")
     print(f"  Total liabilities:        {fmt_money(latest.balance_sheet.total_liabilities)}")

@@ -1,8 +1,9 @@
 from datetime import date
 import warnings
 from pydantic import (
-    BaseModel, 
-    computed_field, 
+    BaseModel,
+    computed_field,
+    field_validator,
     model_validator,
     ConfigDict,
 )
@@ -13,8 +14,18 @@ class CompanyMetadata(BaseModel):
     cik: str
     name: str
 
-    sic: str | None = None
+    sic: int | None = None
     industry: str | None = None              # this IS the SIC description
+
+    @field_validator("sic", mode="before")
+    @classmethod
+    def _coerce_sic(cls, v):
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
 
     fiscal_year_end: str | None = None
     entity_type: str | None = None
@@ -68,6 +79,14 @@ class IncomeStatement(BaseModel):
         if self.ebit is not None and self.tax_expense is not None:
             return self.ebit - self.tax_expense
         return None
+
+    @computed_field
+    @property
+    def ebitda(self) -> float | None:
+        if self.ebit is not None and self.depreciation_expense is not None:
+            return self.ebit + self.depreciation_expense
+        return None
+
 
 class BalanceSheet(BaseModel):
     total_current_assets:               float | None = None
@@ -215,6 +234,7 @@ class ValuationInputs(BaseModel):
     long_term_growth_rate:          float               # From industry growth (or GDP growth)
     projection_years:               int = 5
     falled_back_to_risk_free_rate:  bool = False
+    total_cash:                     float
 
     @computed_field
     @property
@@ -256,6 +276,7 @@ class DCFOutput(BaseModel):
     pv_terminal:                    float
     tv_pct_of_ev:                   float
     enterprise_value:               float
+    equity_value:                   float
     projected_fcff:                 list[float]
     pv_fcff:                        list[float]
     projected_revenue:              list[float]
@@ -266,3 +287,15 @@ class DCFOutput(BaseModel):
     projected_delta_nwc:            list[float]
     pv_factors:                     list[float]
     falled_back_to_risk_free_rate:  bool = False
+
+    # WACC and components
+    wacc: float | None = None
+    cost_of_equity: float | None = None
+    cost_of_debt_after_tax: float | None = None
+    risk_free_rate: float | None = None
+    equity_risk_premium: float | None = None
+    beta: float | None = None
+    tax_rate: float | None = None
+    equity_weight: float | None = None
+    debt_weight: float | None = None
+    terminal_growth: float | None = None

@@ -2,36 +2,24 @@
 
 Covers:
 - RouterDecision structured model (no prose parsing)
-- _route_after_router / _route_after_plan dispatch
-- _should_force_response recursion guard
+- route_after_router / route_after_plan / route_after_react dispatch
+- should_force_response recursion guard
 - merge_cache across tickers
-- get_or_fetch_financials cache reuse
+- FinancialsCache.get_or_fetch cache reuse
 - fiscal_years arg does not collapse to span=2
 - _has_fiscal_years year-aware coverage check
 """
 
-import sys
-from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-
-from backend.agent.cache import (
-    _has_fiscal_years,
-    _financials_from_cache_by_years,
-    empty_data_cache,
-    get_or_fetch_financials,
-)
-from backend.agent.graph import (
-    DEFAULT_RECURSION_LIMIT,
-    RouterDecision,
-    _route_after_plan,
-    _route_after_router,
-    _should_force_response,
-)
+from backend.agent.cache import FinancialsCache, empty_data_cache
+from backend.agent.constants import DEFAULT_RECURSION_LIMIT
+from backend.agent.edges import route_after_plan, route_after_react, route_after_router
+from backend.agent.nodes.router import RouterDecision
+from backend.agent.runtime import should_force_response
 from backend.agent.state import merge_cache
 from backend.processing.schema import HistoricalFinancials
 
@@ -58,31 +46,50 @@ def test_router_decision_rejects_unknown_route():
 
 
 # ---------------------------------------------------------------------------
-# Routing helpers
+# Routing edges
 # ---------------------------------------------------------------------------
 
 def test_route_after_router_plan_node():
-    assert _route_after_router({"router_route": "plan_node"}) == "plan_node"
+    assert route_after_router({"router_route": "plan_node"}) == "plan_node"
 
 
 def test_route_after_router_end():
-    assert _route_after_router({"router_route": "end"}) == "end"
+    assert route_after_router({"router_route": "end"}) == "end"
 
 
 def test_route_after_router_defaults_to_end():
-    assert _route_after_router({}) == "end"
+    assert route_after_router({}) == "end"
 
 
 def test_route_after_plan_needs_tools():
-    assert _route_after_plan({"plan_status": "needs_tools"}) == "tools"
+    assert route_after_plan({"plan_status": "needs_tools"}) == "tools"
+
+
+def test_route_after_plan_needs_scrape():
+    assert route_after_plan({"plan_status": "needs_scrape"}) == "scrape_node"
+
+
+def test_route_after_plan_scrape_and_tools_fans_out():
+    result = route_after_plan({"plan_status": "needs_scrape_and_tools"})
+    assert isinstance(result, list)
+    assert {send.node for send in result} == {"scrape_node", "tools"}
 
 
 def test_route_after_plan_ready():
-    assert _route_after_plan({"plan_status": "ready_to_respond"}) == "response_node"
+    assert route_after_plan({"plan_status": "ready_to_respond"}) == "response_node"
 
 
 def test_route_after_plan_defaults_to_response():
-    assert _route_after_plan({}) == "response_node"
+    assert route_after_plan({}) == "response_node"
+
+
+def test_route_after_react_matches_plan_routing():
+    for status, expected in [
+        ("needs_tools", "tools"),
+        ("needs_scrape", "scrape_node"),
+        ("ready_to_respond", "response_node"),
+    ]:
+        assert route_after_react({"plan_status": status}) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -100,22 +107,22 @@ def _make_config(current_step: int, turn_start_step: int, recursion_limit: int =
 def test_should_force_response_at_limit():
     # turn_step == recursion_limit - 2  →  force
     config = _make_config(current_step=11, turn_start_step=1, recursion_limit=12)
-    assert _should_force_response(config) is True
+    assert should_force_response(config) is True
 
 
 def test_should_force_response_past_limit():
     config = _make_config(current_step=13, turn_start_step=1, recursion_limit=12)
-    assert _should_force_response(config) is True
+    assert should_force_response(config) is True
 
 
 def test_should_not_force_response_well_within_limit():
     config = _make_config(current_step=4, turn_start_step=1, recursion_limit=12)
-    assert _should_force_response(config) is False
+    assert should_force_response(config) is False
 
 
 def test_should_not_force_response_missing_step():
     config = {"recursion_limit": 12, "configurable": {"turn_start_step": 0}}
-    assert _should_force_response(config) is False
+    assert should_force_response(config) is False
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +167,27 @@ def test_merge_cache_does_not_mutate_inputs():
 # _has_fiscal_years — year-aware coverage
 # ---------------------------------------------------------------------------
 
+def _mock_hf(ticker: str, fiscal_years: list[int]):
+    """Build a minimal schema-valid HistoricalFinancials fixture."""
+    return HistoricalFinancials.model_validate(
+        {
+            "ticker": ticker,
+            "metadata": {"cik": f"{ticker}-CIK", "name": ticker},
+            "periods": [
+                {
+                    "fiscal_year": str(y),
+                    "period_end": f"{y}-12-31",
+                    "income_statement": {},
+                    "balance_sheet": {},
+                    "cash_flow": {},
+                    "per_share": {},
+                }
+                for y in fiscal_years
+            ],
+        }
+    )
+
+
 def _cache_with_financials(ticker: str, fiscal_years: list[int]) -> dict[str, Any]:
     cache = empty_data_cache()
     hf = _mock_hf(ticker, fiscal_years)
@@ -184,48 +212,27 @@ def _cache_with_financials(ticker: str, fiscal_years: list[int]) -> dict[str, An
 
 def test_has_fiscal_years_all_present():
     cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    assert _has_fiscal_years(cache, "AAPL", [2021, 2022]) is True
+    assert FinancialsCache._has_fiscal_years(cache, "AAPL", [2021, 2022]) is True
 
 
 def test_has_fiscal_years_missing_year():
     cache = _cache_with_financials("AAPL", [2023, 2024])
-    assert _has_fiscal_years(cache, "AAPL", [2021, 2022]) is False
+    assert FinancialsCache._has_fiscal_years(cache, "AAPL", [2021, 2022]) is False
 
 
 def test_has_fiscal_years_no_financials():
     cache = empty_data_cache()
-    assert _has_fiscal_years(cache, "AAPL", [2021]) is False
+    assert FinancialsCache._has_fiscal_years(cache, "AAPL", [2021]) is False
 
 
 # ---------------------------------------------------------------------------
-# get_or_fetch_financials — cache reuse and fiscal_years span
+# FinancialsCache.get_or_fetch — cache reuse and fiscal_years span
 # ---------------------------------------------------------------------------
-
-def _mock_hf(ticker: str, fiscal_years: list[int]):
-    """Build a minimal schema-valid HistoricalFinancials fixture."""
-    return HistoricalFinancials.model_validate(
-        {
-            "ticker": ticker,
-            "metadata": {"cik": f"{ticker}-CIK", "name": ticker},
-            "periods": [
-                {
-                    "fiscal_year": str(y),
-                    "period_end": f"{y}-12-31",
-                    "income_statement": {},
-                    "balance_sheet": {},
-                    "cash_flow": {},
-                    "per_share": {},
-                }
-                for y in fiscal_years
-            ],
-        }
-    )
-
 
 def test_get_or_fetch_financials_reuses_cache():
     cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    with patch("backend.agent.cache.financials") as mock_fin:
-        result, was_cached = get_or_fetch_financials(cache, "AAPL", span=5)
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
+        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", span=5)
         mock_fin.get_cached_financials.assert_not_called()
     assert was_cached is True
 
@@ -233,9 +240,9 @@ def test_get_or_fetch_financials_reuses_cache():
 def test_get_or_fetch_financials_fetches_on_cache_miss():
     cache = empty_data_cache()
     fake_hf = _mock_hf("AAPL", [2022, 2023, 2024])
-    with patch("backend.agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
         mock_fin.get_cached_financials.return_value = fake_hf
-        result, was_cached = get_or_fetch_financials(cache, "AAPL", span=3)
+        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", span=3)
         mock_fin.get_cached_financials.assert_called_once_with("AAPL", 3)
     assert was_cached is False
 
@@ -244,17 +251,17 @@ def test_fiscal_years_does_not_use_span_2():
     """Requesting [2021, 2022] must fetch with a span large enough to reach 2021, not span=2."""
     cache = empty_data_cache()
     fake_hf = _mock_hf("AAPL", list(range(2018, 2026)))
-    with patch("backend.agent.cache.financials") as mock_fin:
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
         mock_fin.get_cached_financials.return_value = fake_hf
-        get_or_fetch_financials(cache, "AAPL", span=5, fiscal_years=[2021, 2022])
+        FinancialsCache.get_or_fetch(cache, "AAPL", span=5, fiscal_years=[2021, 2022])
         called_span = mock_fin.get_cached_financials.call_args[0][1]
     assert called_span > 2, f"Expected span > 2 but got {called_span}"
 
 
 def test_fiscal_years_cache_hit_does_not_call_external():
     cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    with patch("backend.agent.cache.financials") as mock_fin:
-        result, was_cached = get_or_fetch_financials(cache, "AAPL", fiscal_years=[2021, 2022])
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
+        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", fiscal_years=[2021, 2022])
         mock_fin.get_cached_financials.assert_not_called()
     assert was_cached is True
 
@@ -263,12 +270,11 @@ def test_fiscal_year_cache_hit_normalizes_fy_prefix():
     cache = empty_data_cache()
     hf = _mock_hf("AAPL", [2023])
     hf.periods[0].fiscal_year = "FY2023"
-    from backend.agent.cache import _store_financials
 
-    _store_financials(cache, hf, span=1)
+    FinancialsCache._store(cache, hf, span=1)
 
-    with patch("backend.agent.cache.financials") as mock_fin:
-        result, was_cached = get_or_fetch_financials(cache, "AAPL", fiscal_years=[2023])
+    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
+        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", fiscal_years=[2023])
         mock_fin.get_cached_financials.assert_not_called()
     assert was_cached is True
     assert result.periods[0].fiscal_year == "FY2023"
