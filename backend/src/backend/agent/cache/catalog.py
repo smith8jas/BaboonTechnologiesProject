@@ -1,93 +1,142 @@
-"""Catalog and payload builders that summarize the DuckDB cache for model prompts."""
+"""Catalog builder and retention over the in-state research/calculated message lists.
+
+build_data_catalog -- lightweight availability summary for plan/react (unchanged shape).
+purge               -- retention helper called by router every few cycles.
+
+There is no payload builder here. response_node reads research_messages /
+calculated_messages directly — each entry's `data` is already the full
+content a tool returned, so nothing needs to be reconstructed for it.
+"""
 
 from __future__ import annotations
 
-import duckdb
+from typing import Any, Callable
 
-from .comparables import CompsCache
-from .dcf import DCFCache
-from .financials import FinancialsCache
-from .growth import GrowthCache
-from .market_data import MarketDataCache
-from .ratios import RatiosCache
-from .sector_data import SectorDataCache
+from .store import find
 
-# All per-ticker cache classes. Each must expose:
-#   catalog_key      str  — key used in catalog and payload dicts
-#   catalog_category str  — "searched" or "calculated" (for build_data_catalog)
-#   table_name       str  — DuckDB table that holds this cache's rows
-#
-# Adding a new per-ticker cache: append its class here. Both build functions
-# and _TICKER_UNION_SQL pick it up automatically.
-COMPANY_TOOL_CACHES = [
-    FinancialsCache,
-    MarketDataCache,
-    GrowthCache,
-    RatiosCache,
-    DCFCache,
-    CompsCache,
-]
+# Identifier kinds that live in research_messages but are never surfaced in the
+# catalog — internal inputs to other tools, not something a user asks about.
+_INTERNAL_RESEARCH_KINDS = {"sector_data", "damodaran_sector"}
 
-# Built from COMPANY_TOOL_CACHES so new caches are included automatically.
-# `companies` is prepended explicitly — it is written by FinancialsCache but
-# is a metadata table, not a cache class of its own.
-_TICKER_UNION_SQL = (
-    "\n    UNION ".join(
-        ["SELECT ticker FROM companies"]
-        + [f"SELECT ticker FROM {cls.table_name}" for cls in COMPANY_TOOL_CACHES]
-    )
-    + "\n    ORDER BY ticker"
-)
+FETCHED_KEEP = 3       # cycles of research data to retain (costly to refetch)
+CALCULATED_KEEP = 2    # cycles of calculated data to retain (free to regenerate)
 
 
-def build_data_catalog(conn: duckdb.DuckDBPyConnection) -> dict:
-    """Build a compact availability summary for model prompts."""
+def _catalog_fact_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    from ..tools import TOOLS_BY_NAME  # local import — avoids cache <-> tools import cycle
+
+    kind = entry["identifier"][0]
+    tool = TOOLS_BY_NAME.get(entry["tool"])
+    description_lines = (getattr(tool, "description", "") or "").strip().splitlines()
+    static_text = description_lines[0] if description_lines else entry["tool"]
+
+    builder = _CATALOG_FACT_BUILDERS.get(kind)
+    fact = dict(builder(entry["data"])) if builder else {}
+    detail = fact.pop("detail", "")
+    return {
+        "available": True,
+        **fact,
+        "summary": f"{static_text} — {detail}" if detail else static_text,
+    }
+
+
+def _financials_fact(data: dict[str, Any]) -> dict[str, Any]:
+    fiscal_years = [p.get("fiscal_year") for p in data.get("periods", [])]
+    detail = f"{fiscal_years[0]}–{fiscal_years[-1]} ({len(fiscal_years)} periods)" if fiscal_years else ""
+    return {"fiscal_years": fiscal_years, "max_span": len(fiscal_years), "detail": detail}
+
+
+def _market_data_fact(data: dict[str, Any]) -> dict[str, Any]:
+    return {"include_rfr": data.get("risk_free_rate") is not None}
+
+
+def _period_keyed_fact(data: dict[str, Any]) -> dict[str, Any]:
+    """Shared shape for ratios/growth — one sub-dict per fiscal year."""
+    span = len(data)
+    return {"span": span, "detail": f"{span} periods" if span else ""}
+
+
+def _dcf_fact(data: dict[str, Any]) -> dict[str, Any]:
+    iv = data.get("intrinsic_value_per_share")
+    wacc = data.get("wacc")
+    detail = ""
+    if iv is not None:
+        wacc_str = f"{wacc:.1%}" if wacc is not None else "N/A"
+        detail = f"base FY={data.get('fiscal_year')}, WACC={wacc_str}, intrinsic value=${iv:.2f}/share"
+    return {"base_fiscal_year": data.get("fiscal_year"), "detail": detail}
+
+
+def _comparables_fact(data: dict[str, Any]) -> dict[str, Any]:
+    band = data.get("value_band") or {}
+    low, high = band.get("low"), band.get("high")
+    detail = f"implied value band ${low:.2f}–${high:.2f}/share" if low is not None and high is not None else ""
+    return {"detail": detail}
+
+
+_CATALOG_FACT_BUILDERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "financials": _financials_fact,
+    "market_data": _market_data_fact,
+    "ratios": _period_keyed_fact,
+    "growth": _period_keyed_fact,
+    "dcf": _dcf_fact,
+    "comparables": _comparables_fact,
+}
+
+
+def _all_tickers(research_messages: list[dict], calculated_messages: list[dict]) -> list[str]:
+    tickers = {e["ticker"] for e in research_messages if e["ticker"]}
+    tickers |= {e["ticker"] for e in calculated_messages if e["ticker"]}
+    return sorted(tickers)
+
+
+def build_data_catalog(research_messages: list[dict], calculated_messages: list[dict]) -> dict:
+    """Build a compact availability summary for plan/react prompts."""
     catalog: dict = {"companies": [], "global": {"sector_data_years": []}}
 
-    conn.execute(_TICKER_UNION_SQL)
-    tickers = [row[0] for row in conn.fetchall()]
+    for ticker in _all_tickers(research_messages, calculated_messages):
+        fin = find(research_messages, ("financials", ticker))
+        name = (fin["data"].get("metadata") or {}).get("name") if fin else None
+        company: dict = {"ticker": ticker, "name": name, "searched": {}, "calculated": {}}
 
-    for ticker in tickers:
-        conn.execute("SELECT name FROM companies WHERE ticker = ?", [ticker])
-        name_row = conn.fetchone()
-        entry: dict = {
-            "ticker": ticker,
-            "name": name_row[0] if name_row else None,
-            "searched": {},
-            "calculated": {},
-        }
+        for entry in research_messages:
+            kind = entry["identifier"][0]
+            if entry["ticker"] != ticker or kind in _INTERNAL_RESEARCH_KINDS:
+                continue
+            company["searched"][kind] = _catalog_fact_entry(entry)
 
-        for CacheClass in COMPANY_TOOL_CACHES:
-            result = CacheClass.catalog_entry(conn, ticker)
-            if result:
-                entry[CacheClass.catalog_category][CacheClass.catalog_key] = result
+        for entry in calculated_messages:
+            if entry["ticker"] != ticker:
+                continue
+            identifier = entry["identifier"]
+            kind = identifier[0]
+            fact = _catalog_fact_entry(entry)
+            if len(identifier) > 2:
+                company["calculated"].setdefault(kind, {})[identifier[2]] = fact
+            else:
+                company["calculated"][kind] = fact
 
-        catalog["companies"].append(entry)
+        catalog["companies"].append(company)
 
-    catalog["global"]["sector_data_years"] = SectorDataCache.catalog_entry(conn)
+    catalog["global"]["sector_data_years"] = sorted(
+        e["identifier"][1] for e in research_messages if e["identifier"][0] == "sector_data"
+    )
     return catalog
 
 
-def build_data_payload(conn: duckdb.DuckDBPyConnection) -> dict:
-    """Build the detailed cached data payload used by response generation."""
-    payload: dict = {}
+def purge(
+    research_messages: list[dict], calculated_messages: list[dict], current_cycle: int
+) -> tuple[list[dict], list[dict]]:
+    """Drop entries older than their retention window. Calculated data is purged more
+    aggressively than research data since recomputing it is free."""
+    fetched_threshold = current_cycle - FETCHED_KEEP
+    calculated_threshold = current_cycle - CALCULATED_KEEP
 
-    conn.execute(_TICKER_UNION_SQL)
-    tickers = [row[0] for row in conn.fetchall()]
+    new_research = research_messages
+    if fetched_threshold >= 1:
+        new_research = [e for e in research_messages if e["cycle"] > fetched_threshold]
 
-    for ticker in tickers:
-        entry: dict = {}
+    new_calculated = calculated_messages
+    if calculated_threshold >= 1:
+        new_calculated = [e for e in calculated_messages if e["cycle"] > calculated_threshold]
 
-        for CacheClass in COMPANY_TOOL_CACHES:
-            result = CacheClass.payload_entry(conn, ticker)
-            if result:
-                entry[CacheClass.catalog_key] = result
-
-        if entry:
-            payload[ticker] = entry
-
-    sd = SectorDataCache.payload_entry(conn)
-    if sd:
-        payload["sector_data"] = sd
-
-    return payload
+    return new_research, new_calculated

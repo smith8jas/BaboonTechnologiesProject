@@ -1,14 +1,30 @@
 """Research-phase tools: pull external data (financials, market, sector, web)."""
 
+from datetime import date
 from typing import Annotated
 
 from langchain_core.tools import InjectedToolArg, tool
 
+from backend.services import financials as financials_service
 from backend.services.scrape import search_and_scrape
 
-from ..cache import FinancialsCache, MarketDataCache, SectorDataCache
-from ..cache.session import open_connection
+from ..cache import find, merge_financials_data, upsert
 from .base import log_cache_status
+
+
+def _fy_str(year) -> str:
+    """Normalize a fiscal-year label to the 'FY2023' format stored in research_messages."""
+    s = str(year).strip().upper()
+    return s if s.startswith("FY") else f"FY{s}"
+
+
+def _normalize_financials_data(data: dict) -> dict:
+    """Guarantee every period has a usable fiscal_year string, even if metadata.fiscal_year_end
+    was missing and HistoricalFinancials couldn't derive one."""
+    for period in data.get("periods", []):
+        if not period.get("fiscal_year"):
+            period["fiscal_year"] = _fy_str(period["period_end"][:4])
+    return data
 
 
 @tool
@@ -16,7 +32,8 @@ def get_financials(
     ticker: str,
     span: int = 5,
     fiscal_years: list[int] = None,
-    session_id: Annotated[str, InjectedToolArg] = "",
+    research_messages: Annotated[list, InjectedToolArg] = None,
+    cycle: Annotated[int, InjectedToolArg] = 0,
 ) -> dict:
     """
     Pull historical income statement, balance sheet, and cash flow statement for a ticker.
@@ -30,7 +47,7 @@ def get_financials(
         span: Number of latest annual fiscal periods (10-K filings) to retrieve. Ignored when
               fiscal_years is provided (span is then computed from the requested years).
         fiscal_years: Explicit list of fiscal years to retrieve (e.g. [2021, 2022]). When given,
-                      only those years are returned and the cache is checked by year instead of span.
+                      only those years are checked for cache coverage instead of span.
 
     Key output fields:
         income_statement.interest_expense       May be None — use falled_back_to_risk_free_rate
@@ -47,25 +64,47 @@ def get_financials(
                                                 is missing.
         balance_sheet.net_working_capital       Computed: current assets minus current liabilities.
     """
-    conn = open_connection(session_id)
-    try:
-        result, was_cached = FinancialsCache.get_or_fetch(conn, ticker, int(span), fiscal_years, session_id=session_id)
-    finally:
-        conn.close()
-    log_cache_status("get_financials", was_cached, ticker=ticker, span=span, fiscal_years=fiscal_years)
-    return {
-        "source": "cache" if was_cached else "external",
-        "ticker": result.ticker,
-        "periods_retrieved": len(result.periods),
-        "fiscal_years": [p.fiscal_year for p in result.periods],
-    }
+    t = str(ticker).strip().upper()
+    research_messages = research_messages if research_messages is not None else []
+    identifier = ("financials", t)
+    existing = find(research_messages, identifier)
+
+    if fiscal_years:
+        targets = {_fy_str(y) for y in fiscal_years}
+        have = {p["fiscal_year"] for p in existing["data"]["periods"]} if existing else set()
+        if targets.issubset(have):
+            log_cache_status("get_financials", True, ticker=t, span=span, fiscal_years=fiscal_years)
+            return {"source": "cache", "data": existing["data"]}
+        needed_span = max(int(span), date.today().year - min(int(y) for y in fiscal_years) + 2)
+        hf = financials_service.get_cached_financials(t, needed_span)
+        new_data = _normalize_financials_data(hf.model_dump(mode="json"))
+        entry = upsert(
+            research_messages, tool="get_financials", identifier=identifier,
+            ticker=t, cycle=cycle, data=new_data, merge=merge_financials_data,
+        )
+        log_cache_status("get_financials", False, ticker=t, span=span, fiscal_years=fiscal_years)
+        return {"source": "external", "data": entry["data"]}
+
+    if existing and len(existing["data"]["periods"]) >= int(span):
+        log_cache_status("get_financials", True, ticker=t, span=span)
+        return {"source": "cache", "data": existing["data"]}
+
+    hf = financials_service.get_cached_financials(t, int(span))
+    new_data = _normalize_financials_data(hf.model_dump(mode="json"))
+    entry = upsert(
+        research_messages, tool="get_financials", identifier=identifier,
+        ticker=t, cycle=cycle, data=new_data, merge=merge_financials_data,
+    )
+    log_cache_status("get_financials", False, ticker=t, span=span)
+    return {"source": "external", "data": entry["data"]}
 
 
 @tool
 def get_market_data(
     ticker: str,
     include_rfr: bool = True,
-    session_id: Annotated[str, InjectedToolArg] = "",
+    research_messages: Annotated[list, InjectedToolArg] = None,
+    cycle: Annotated[int, InjectedToolArg] = 0,
 ) -> dict:
     """
     Pull current market data (price, beta, shares, market cap) and optional risk-free rate.
@@ -89,26 +128,30 @@ def get_market_data(
         shares_outstanding   Diluted share count. Per-share calculations and dilution tracking;
                              not for workforce or operational scale.
     """
-    conn = open_connection(session_id)
-    try:
-        result, was_cached = MarketDataCache.get_or_fetch(conn, ticker, include_rfr, session_id=session_id)
-    finally:
-        conn.close()
-    log_cache_status("get_market_data", was_cached, ticker=ticker, include_rfr=include_rfr)
-    return {
-        "source": "cache" if was_cached else "external",
-        "ticker": ticker,
-        "current_price": result.current_price,
-        "market_cap": result.market_cap,
-        "beta": result.beta,
-        "risk_free_rate": result.risk_free_rate,
-    }
+    t = str(ticker).strip().upper()
+    research_messages = research_messages if research_messages is not None else []
+    identifier = ("market_data", t)
+    existing = find(research_messages, identifier)
+
+    if existing and (existing["data"].get("risk_free_rate") is not None or not include_rfr):
+        log_cache_status("get_market_data", True, ticker=t, include_rfr=include_rfr)
+        return {"source": "cache", "data": existing["data"]}
+
+    md = financials_service.get_market_data(t, include_rfr)
+    new_data = md.model_dump(mode="json")
+    entry = upsert(
+        research_messages, tool="get_market_data", identifier=identifier,
+        ticker=t, cycle=cycle, data=new_data,
+    )
+    log_cache_status("get_market_data", False, ticker=t, include_rfr=include_rfr)
+    return {"source": "external", "data": entry["data"]}
 
 
 @tool
 def get_sector_data(
     year: int,
-    session_id: Annotated[str, InjectedToolArg] = "",
+    research_messages: Annotated[list, InjectedToolArg] = None,
+    cycle: Annotated[int, InjectedToolArg] = 0,
 ) -> dict:
     """
     Pull sector-level WACC and DCF model parameters for a given year.
@@ -123,25 +166,29 @@ def get_sector_data(
                                forecasts or analyst consensus. This is a model floor, not a
                                prediction.
     """
-    conn = open_connection(session_id)
-    try:
-        result, was_cached = SectorDataCache.get_or_fetch(conn, year, session_id=session_id)
-    finally:
-        conn.close()
-    log_cache_status("get_sector_data", was_cached, year=year)
-    return {
-        "source": "cache" if was_cached else "external",
-        "year": year,
-        "equity_risk_premium": result.equity_risk_premium,
-        "long_term_growth_rate": result.long_term_growth_rate,
-    }
+    resolved = int(year or date.today().year)
+    research_messages = research_messages if research_messages is not None else []
+    identifier = ("sector_data", resolved)
+    existing = find(research_messages, identifier)
+
+    if existing:
+        log_cache_status("get_sector_data", True, year=resolved)
+        return {"source": "cache", "data": existing["data"]}
+
+    sd = financials_service.get_sector_data(resolved)
+    new_data = sd.model_dump(mode="json")
+    entry = upsert(
+        research_messages, tool="get_sector_data", identifier=identifier,
+        ticker=None, cycle=cycle, data=new_data,
+    )
+    log_cache_status("get_sector_data", False, year=resolved)
+    return {"source": "external", "data": entry["data"]}
 
 
 @tool
 def scrape_web(
     topic: str,
     max_results: int = 3,
-    session_id: Annotated[str, InjectedToolArg] = "",
 ) -> dict:
     """
     Search the web for recent news, events, or qualitative context on a financial topic.

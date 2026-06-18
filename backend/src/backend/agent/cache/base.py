@@ -16,7 +16,7 @@ def tool_content(payload: Any) -> str:
 
 
 class CacheMissError(RuntimeError):
-    """Raised when a calculation cache requires data not yet in DuckDB.
+    """Raised when a calculation tool requires data not yet in research_messages.
 
     Signals that the corresponding research tool was not called before this
     calculation tool — a planning error that should surface explicitly rather

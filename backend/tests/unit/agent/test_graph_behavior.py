@@ -4,24 +4,21 @@ Covers:
 - RouterDecision structured model (no prose parsing)
 - route_after_router / route_after_plan / route_after_react dispatch
 - should_force_response recursion guard
-- merge_cache across tickers
-- FinancialsCache.get_or_fetch cache reuse
-- fiscal_years arg does not collapse to span=2
-- _has_fiscal_years year-aware coverage check
-"""
 
-from typing import Any
-from unittest.mock import patch
+Note: this file previously also covered an in-memory nested-dict cache
+(`empty_data_cache`, `merge_cache`) and `FinancialsCache.get_or_fetch` against
+a DuckDB connection — both predate the current research_messages/
+calculated_messages design and no longer exist. Coverage for "is this fiscal
+year already covered" now lives in test_cache_state_evolution.py, against
+get_financials directly.
+"""
 
 import pytest
 
-from backend.agent.cache import FinancialsCache, empty_data_cache
 from backend.agent.constants import DEFAULT_RECURSION_LIMIT
 from backend.agent.edges import route_after_plan, route_after_react, route_after_router
 from backend.agent.nodes.router import RouterDecision
 from backend.agent.runtime import should_force_response
-from backend.agent.state import merge_cache
-from backend.processing.schema import HistoricalFinancials
 
 
 # ---------------------------------------------------------------------------
@@ -123,158 +120,3 @@ def test_should_not_force_response_well_within_limit():
 def test_should_not_force_response_missing_step():
     config = {"recursion_limit": 12, "configurable": {"turn_start_step": 0}}
     assert should_force_response(config) is False
-
-
-# ---------------------------------------------------------------------------
-# merge_cache across tickers
-# ---------------------------------------------------------------------------
-
-def test_merge_cache_combines_separate_tickers():
-    left = {"companies": {"AAPL": {"value": 1}}, "global": {}}
-    right = {"companies": {"MSFT": {"value": 2}}, "global": {}}
-    merged = merge_cache(left, right)
-    assert "AAPL" in merged["companies"]
-    assert "MSFT" in merged["companies"]
-
-
-def test_merge_cache_right_wins_on_conflict():
-    left = {"companies": {"AAPL": {"value": 1}}, "global": {}}
-    right = {"companies": {"AAPL": {"value": 99}}, "global": {}}
-    merged = merge_cache(left, right)
-    assert merged["companies"]["AAPL"]["value"] == 99
-
-
-def test_merge_cache_empty_left():
-    right = {"companies": {"TSLA": {"data": True}}, "global": {}}
-    merged = merge_cache(None, right)
-    assert "TSLA" in merged["companies"]
-
-
-def test_merge_cache_empty_right():
-    left = {"companies": {"TSLA": {"data": True}}, "global": {}}
-    merged = merge_cache(left, None)
-    assert "TSLA" in merged["companies"]
-
-
-def test_merge_cache_does_not_mutate_inputs():
-    left = {"companies": {"AAPL": {"v": 1}}, "global": {}}
-    right = {"companies": {"MSFT": {"v": 2}}, "global": {}}
-    merge_cache(left, right)
-    assert "MSFT" not in left["companies"]
-
-
-# ---------------------------------------------------------------------------
-# _has_fiscal_years — year-aware coverage
-# ---------------------------------------------------------------------------
-
-def _mock_hf(ticker: str, fiscal_years: list[int]):
-    """Build a minimal schema-valid HistoricalFinancials fixture."""
-    return HistoricalFinancials.model_validate(
-        {
-            "ticker": ticker,
-            "metadata": {"cik": f"{ticker}-CIK", "name": ticker},
-            "periods": [
-                {
-                    "fiscal_year": str(y),
-                    "period_end": f"{y}-12-31",
-                    "income_statement": {},
-                    "balance_sheet": {},
-                    "cash_flow": {},
-                    "per_share": {},
-                }
-                for y in fiscal_years
-            ],
-        }
-    )
-
-
-def _cache_with_financials(ticker: str, fiscal_years: list[int]) -> dict[str, Any]:
-    cache = empty_data_cache()
-    hf = _mock_hf(ticker, fiscal_years)
-    periods = {str(p.fiscal_year): p.model_dump(mode="json") for p in hf.periods}
-    cache["companies"][ticker] = {
-        "ticker": ticker,
-        "name": None,
-        "searched": {
-            "financials": {
-                "coverage": {
-                    "fiscal_years": [str(y) for y in fiscal_years],
-                    "max_span": len(fiscal_years),
-                },
-                "periods_by_fiscal_year": periods,
-                "metadata": hf.metadata.model_dump(mode="json"),
-            }
-        },
-        "calculated": {},
-    }
-    return cache
-
-
-def test_has_fiscal_years_all_present():
-    cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    assert FinancialsCache._has_fiscal_years(cache, "AAPL", [2021, 2022]) is True
-
-
-def test_has_fiscal_years_missing_year():
-    cache = _cache_with_financials("AAPL", [2023, 2024])
-    assert FinancialsCache._has_fiscal_years(cache, "AAPL", [2021, 2022]) is False
-
-
-def test_has_fiscal_years_no_financials():
-    cache = empty_data_cache()
-    assert FinancialsCache._has_fiscal_years(cache, "AAPL", [2021]) is False
-
-
-# ---------------------------------------------------------------------------
-# FinancialsCache.get_or_fetch — cache reuse and fiscal_years span
-# ---------------------------------------------------------------------------
-
-def test_get_or_fetch_financials_reuses_cache():
-    cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
-        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", span=5)
-        mock_fin.get_cached_financials.assert_not_called()
-    assert was_cached is True
-
-
-def test_get_or_fetch_financials_fetches_on_cache_miss():
-    cache = empty_data_cache()
-    fake_hf = _mock_hf("AAPL", [2022, 2023, 2024])
-    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
-        mock_fin.get_cached_financials.return_value = fake_hf
-        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", span=3)
-        mock_fin.get_cached_financials.assert_called_once_with("AAPL", 3)
-    assert was_cached is False
-
-
-def test_fiscal_years_does_not_use_span_2():
-    """Requesting [2021, 2022] must fetch with a span large enough to reach 2021, not span=2."""
-    cache = empty_data_cache()
-    fake_hf = _mock_hf("AAPL", list(range(2018, 2026)))
-    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
-        mock_fin.get_cached_financials.return_value = fake_hf
-        FinancialsCache.get_or_fetch(cache, "AAPL", span=5, fiscal_years=[2021, 2022])
-        called_span = mock_fin.get_cached_financials.call_args[0][1]
-    assert called_span > 2, f"Expected span > 2 but got {called_span}"
-
-
-def test_fiscal_years_cache_hit_does_not_call_external():
-    cache = _cache_with_financials("AAPL", [2020, 2021, 2022, 2023, 2024])
-    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
-        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", fiscal_years=[2021, 2022])
-        mock_fin.get_cached_financials.assert_not_called()
-    assert was_cached is True
-
-
-def test_fiscal_year_cache_hit_normalizes_fy_prefix():
-    cache = empty_data_cache()
-    hf = _mock_hf("AAPL", [2023])
-    hf.periods[0].fiscal_year = "FY2023"
-
-    FinancialsCache._store(cache, hf, span=1)
-
-    with patch("backend.agent.cache.financials.financials_service") as mock_fin:
-        result, was_cached = FinancialsCache.get_or_fetch(cache, "AAPL", fiscal_years=[2023])
-        mock_fin.get_cached_financials.assert_not_called()
-    assert was_cached is True
-    assert result.periods[0].fiscal_year == "FY2023"
