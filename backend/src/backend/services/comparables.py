@@ -9,17 +9,17 @@ Schema dependency:
   CompanyMetadata must include `sic: Optional[int]`.
   Add to processing/schema.py if not already present.
 
-Tool registration:
-  Import get_comps_valuation in agent/tools.py.
+Pure functions only — no I/O, no agent/cache dependency. The caller (the
+get_comps_valuation tool) is responsible for resolving HistoricalFinancials/
+MarketData objects from research_messages (and fetching Damodaran sector
+multiples on a miss) before calling into this module.
 """
 
 from __future__ import annotations
 
 import statistics
 from pathlib import Path
-from typing import Optional
 
-import duckdb
 import pandas as pd
 
 from backend.processing.schema import HistoricalFinancials, MarketData
@@ -197,23 +197,23 @@ def _value_band(implied: dict[str, float | None]) -> dict:
 # Path A — peer-based comps
 # ---------------------------------------------------------------------------
 
-def peer_comps(conn: duckdb.DuckDBPyConnection, ticker: str, peers: list[str]) -> dict:
-    from backend.agent.cache import FinancialsCache, MarketDataCache
-    target_fin = FinancialsCache.get_from_db(conn, ticker)
-    target_mkt = MarketDataCache.get_from_db(conn, ticker)
-
+def peer_comps(
+    target_fin: HistoricalFinancials,
+    target_mkt: MarketData,
+    peers: list[tuple[str, HistoricalFinancials, MarketData]],
+    dropped: list[dict],
+) -> dict:
+    """peers: already-resolved (ticker, financials, market_data) triples. dropped: peers
+    the caller couldn't resolve (missing research data), pre-populated by the caller."""
     peer_results: list[dict] = []
-    dropped: list[dict] = []
 
-    for peer in peers:
+    for peer_ticker, peer_fin, peer_mkt in peers:
         try:
-            peer_fin = FinancialsCache.get_from_db(conn, peer)
-            peer_mkt = MarketDataCache.get_from_db(conn, peer)
             result = _compute_multiples(peer_fin, peer_mkt)
-            result["ticker"] = peer
+            result["ticker"] = peer_ticker
             peer_results.append(result)
         except Exception as exc:
-            dropped.append({"ticker": peer, "reason": str(exc)})
+            dropped.append({"ticker": peer_ticker, "reason": str(exc)})
 
     if not peer_results:
         return {"error": "No valid peers — all dropped", "dropped_peers": dropped}
@@ -239,15 +239,12 @@ def peer_comps(conn: duckdb.DuckDBPyConnection, ticker: str, peers: list[str]) -
 # Path B — Damodaran sector fallback
 # ---------------------------------------------------------------------------
 
-def damodaran_fallback(conn: duckdb.DuckDBPyConnection, ticker: str, session_id: str = "") -> dict:
-    from backend.agent.cache import FinancialsCache, MarketDataCache
-    from backend.agent.cache.damodaran import DamodaranSectorCache
-    fin = FinancialsCache.get_from_db(conn, ticker)
-    mkt = MarketDataCache.get_from_db(conn, ticker)
-
+def resolve_damodaran_industry(fin: HistoricalFinancials) -> tuple[str | None, list[str]]:
+    """Map a company's SIC code to a Damodaran industry name. Returns (industry, notes) —
+    industry is None when SIC is missing or unmapped (notes explain why)."""
     sic: int | None = getattr(fin.metadata, "sic", None)
     if sic is None:
-        return {"error": "CompanyMetadata.sic not available — add field to schema.py"}
+        return None, ["CompanyMetadata.sic not available — add field to schema.py"]
 
     notes: list[str] = []
     if _is_financial(sic):
@@ -259,9 +256,19 @@ def damodaran_fallback(conn: duckdb.DuckDBPyConnection, ticker: str, session_id:
 
     industry = _damodaran_industry(sic)
     if industry is None:
-        return {"error": f"SIC {sic} unmapped — extend sic.csv", "notes": notes}
+        notes.append(f"SIC {sic} unmapped — extend sic.csv")
+    return industry, notes
 
-    sector_multiples = DamodaranSectorCache.get_or_fetch(conn, industry, session_id)
+
+def damodaran_fallback(
+    fin: HistoricalFinancials,
+    mkt: MarketData,
+    industry: str,
+    notes: list[str],
+    sector_multiples: dict,
+) -> dict:
+    """industry/notes come from resolve_damodaran_industry(); sector_multiples is the
+    already-resolved {"ev_sales", "price_sales", "trailing_pe"} dict for that industry."""
     sector_ev_sales  = sector_multiples["ev_sales"]
     sector_ps        = sector_multiples["price_sales"]
     sector_pe        = sector_multiples["trailing_pe"]

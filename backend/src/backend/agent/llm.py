@@ -41,7 +41,7 @@ _NODE_CONTEXT: dict[str, set[str]] = {
     "router":   {"available_tools", "previous_depth"},
     "plan":     {"available_tools", "cached_data_catalog"},
     "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale"},
-    "response": {"available_tools", "cached_data_catalog", "scrape_history", "forced_response_due_to_recursion"},
+    "response": {"scrape_history", "forced_response_due_to_recursion"},
     "judge":    set(),
     "scrape":   {"scrape_history"},
 }

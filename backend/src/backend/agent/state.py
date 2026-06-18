@@ -19,8 +19,9 @@ class AgentState(TypedDict):
     judge_verdict: NotRequired[str] #Verdict from judge node: "end", "revise", or "gather_more"
     judge_react_extensions: NotRequired[int] #Extra react iterations granted by judge when react is at its limit
     forced_response_due_to_recursion: NotRequired[bool] #Boolean that forces response if recursion is being reached
-    session_id: NotRequired[str] #DuckDB session key — maps to the per-conversation database file
     data_catalog: NotRequired[dict[str, Any]] #Summary of financial data cache
+    research_messages: NotRequired[list[dict[str, Any]]] #Research-tool results (financials, market data, sector data, damodaran), deduped by identifier
+    calculated_messages: NotRequired[list[dict[str, Any]]] #Calculation-tool results (ratios, growth, dcf, comparables), deduped by identifier
     scrape_history: NotRequired[Annotated[list[dict[str, Any]], operator.add]] #History of scraped content during conversation
     tool_guidance: NotRequired[str] #Justification for tool use written by plan node and then red by response node
     deep_plan: NotRequired[bool] #Whether the router selected the deep-analysis path for the current request; persists across turns so the next router reads it as previous_depth

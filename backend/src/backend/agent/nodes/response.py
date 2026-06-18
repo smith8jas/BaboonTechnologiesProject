@@ -1,11 +1,10 @@
-"""Response node: composes the final user-facing answer from cached data."""
+"""Response node: composes the final user-facing answer from research/calculated messages."""
 
 import logging
+from typing import Any
 
 from langchain_core.messages import AIMessage
 
-from ..cache import build_data_payload
-from ..cache.session import open_connection
 from ..llm import invoke_llm
 from ..prompts import deep_response_prompt, judge_response_addendum, response_prompt
 from ..state import AgentState
@@ -13,10 +12,15 @@ from ..state import AgentState
 logger = logging.getLogger(__name__)
 
 
+def _project(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop bookkeeping fields (tool, cycle, last_updated) the LLM doesn't need."""
+    return [{"ticker": e["ticker"], "identifier": e["identifier"], "data": e["data"]} for e in entries]
+
+
 async def response_node(state: AgentState):
-    """Generate the final user-facing answer from messages and cached data."""
+    """Generate the final user-facing answer from messages and gathered data."""
     logger.info("Response Node Activated")
-    
+
     #Builds prompt; append judge critique instruction and prior response after a judge revision
     local_prompt = deep_response_prompt if state.get("deep_plan") else response_prompt
     if state.get("judge_verdict") == "revise":
@@ -24,15 +28,12 @@ async def response_node(state: AgentState):
         if cr := state.get("current_response"):
             local_prompt += f"\n\nYour previous response that must be completely rewritten:\n{cr}"
 
-    #Opens connection to DuckDB with session_id stored in State Class
-    session_id = state.get("session_id") or ""
-    conn = open_connection(session_id)
-
-    #Gets necessary data from DB for response node to read
-    try:
-        payload = build_data_payload(conn)
-    finally:
-        conn.close()
+    #Reads every research/calculated entry currently known this conversation — full
+    #content, not windowed to the latest tool-calling round, and not summarized.
+    payload = {
+        "research": _project(state.get("research_messages", [])),
+        "calculated": _project(state.get("calculated_messages", [])),
+    }
 
     #Gets access to plan node's rationale for tool selection and appends it to payload
     if guidance := state.get("tool_guidance"):

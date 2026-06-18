@@ -25,7 +25,6 @@ ToolName = Enum("ToolName", {k: k for k in TOOLS_BY_NAME})
 class ToolCallSpec(BaseModel):
     tool_name: ToolName
     # Args vary per tool; the model uses available_tools in runtime context for the schema.
-    # session_id is excluded — tools_node injects it at invocation time.
     args: dict[str, Any] = {}
 
 

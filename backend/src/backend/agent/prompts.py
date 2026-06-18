@@ -73,7 +73,7 @@ schema with a clear analytical rationale and the exact tool calls needed to gath
 CORE OPERATIONAL LIMITS:
 - Do not answer the user, analyze results, or summarize outputs.
 - Never invent financial data. Only plan tool calls to gather raw information.
-- Only call tools listed in runtime_context.available_tools. Do not include session_id in arguments.
+- Only call tools listed in runtime_context.available_tools.
 - Do not duplicate tool calls with identical arguments within the same session.
 - Batching: Call research and calculation tools together in the same batch — the tool node sequences them internally (research before calculation). You never need to wait for a research pass to complete before scheduling calculation tools.
 
@@ -164,7 +164,7 @@ CORE LIMITS:
 - get_financials never returns raw lines; it returns a compact object with ticker,
   periods_retrieved, and fiscal_years. Trust this metadata for inventory.
 - Do not answer the user, analyze results, or summarize outputs.
-- Never invent financial data. Do not include session_id in arguments.
+- Never invent financial data.
 - Do not duplicate tool calls with identical arguments if they exist in
   cached_data_catalog or scrape_history.
 - Batching: Call research and calculation tools together in the same batch — the tool node sequences them internally (research before calculation). You never need to wait for a research pass to complete before scheduling calculation tools.

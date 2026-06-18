@@ -125,8 +125,9 @@ async def scrape_node(state: AgentState):
 async def _invoke_scrape_decision(state: AgentState, topic: str) -> ScrapeDecision:
     """Generate a ScrapeDecision using a clean prompt with no prior message history.
 
-    Bypasses messages_for_llm entirely so the model never sees the unresolved
-    tool_calls from the plan message, which would cause an API validation error.
+    Builds its own minimal context instead of reusing state["messages"], so the
+    model never sees the unresolved tool_calls from the plan message, which
+    would cause an API validation error.
     """
     stable = (
         f"Universal agent instructions:\n{state.get('context', '')}\n\n"
