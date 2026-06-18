@@ -6,7 +6,7 @@ from typing import Literal
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
-from ..cache.session import purge_old_data, set_session_cycle
+from ..cache import purge
 from ..llm import invoke_llm_structured
 from ..prompts import router_prompt
 from ..state import AgentState
@@ -29,12 +29,14 @@ async def router(state: AgentState):
     logger.info("Router Node Activated")
 
     query_count = state.get("query_count", 0) + 1
-    session_id = state.get("session_id") or ""
 
-    if session_id:
-        set_session_cycle(session_id, query_count)
-        if query_count % 5 == 0:
-            purge_old_data(session_id, query_count)
+    #Every 5th turn, drop research/calculated entries past their retention window
+    purge_update: dict = {}
+    if query_count % 5 == 0:
+        research_messages, calculated_messages = purge(
+            state.get("research_messages", []), state.get("calculated_messages", []), query_count
+        )
+        purge_update = {"research_messages": research_messages, "calculated_messages": calculated_messages}
 
     #Tries invoking the llm with the state, router_prompt and RouterDecision pydantic structure
     try:
@@ -46,13 +48,19 @@ async def router(state: AgentState):
             "router_route": "end",
             "deep_plan": False,
             "query_count": query_count,
+            **purge_update,
         }
-    
+
     #Prints Deep Plan if the router decided the Analysis needs a Deep Plan.
 
     #Sets the path to plan node if router chose it
     if decision.route == "plan_node":
-        return {"router_route": "plan_node", "deep_plan": decision.Deep_Plan, "query_count": query_count}
+        return {
+            "router_route": "plan_node",
+            "deep_plan": decision.Deep_Plan,
+            "query_count": query_count,
+            **purge_update,
+        }
 
     #Sets path to end if router dit not choose plan and either prints an llm response or a premade response.
     answer = decision.answer or "I can help with public-company valuation and financial analysis. What company or ticker would you like to analyze?"
@@ -61,4 +69,5 @@ async def router(state: AgentState):
         "router_route": "end",
         "deep_plan": False,
         "query_count": query_count,
+        **purge_update,
     }

@@ -1,42 +1,34 @@
-"""Agent-local data cache: one module per tool cache plus shared helpers.
+"""Agent-local data store: in-state tool message lists plus the catalog builder.
 
 Layout:
-    schema.py       cache key constants and dependency labels
-    base.py         CacheHelpers, serialization helpers
-    session.py      DuckDB session lifecycle (create / open / close)
-    financials.py   FinancialsCache      (financials + companies tables)
-    market_data.py  MarketDataCache      (market_data table)
-    sector_data.py  SectorDataCache      (sector_data table)
-    growth.py       GrowthCache          (growth_rates table)
-    ratios.py       RatiosCache          (ratios table)
-    dcf.py          DCFCache             (dcf table)
-    comparables.py  CompsCache           (comparables table)
-    catalog.py      catalog/payload builders for prompts
+    base.py       CacheHelpers, tool_content, CacheMissError
+    store.py      upsert / find / now — the shared primitive every tool writes through
+    merge.py      merge_financials_data — period-union + coalesce merge for financials
+    catalog.py    build_data_catalog / purge
+
+There is no DuckDB and no per-tool cache class here anymore — research and
+calculation tools (agent/tools/research.py, agent/tools/calculation.py) read
+and write research_messages/calculated_messages (plain lists living in
+AgentState) directly via upsert()/find(), using merge_financials_data where
+a partial-overlap merge is needed. response_node reads those same lists
+directly — there is no separate payload builder.
 """
 
-from .base import CacheHelpers, tool_content
-from .catalog import COMPANY_TOOL_CACHES, build_data_catalog, build_data_payload
-from .comparables import CompsCache
-from .damodaran import DamodaranSectorCache
-from .dcf import DCFCache
-from .financials import FinancialsCache
-from .growth import GrowthCache
-from .market_data import MarketDataCache
-from .ratios import RatiosCache
-from .sector_data import SectorDataCache
+from .base import CacheHelpers, CacheMissError, tool_content
+from .catalog import CALCULATED_KEEP, FETCHED_KEEP, build_data_catalog, purge
+from .merge import merge_financials_data
+from .store import find, now, upsert
 
 __all__ = [
     "CacheHelpers",
-    "COMPANY_TOOL_CACHES",
-    "CompsCache",
-    "DamodaranSectorCache",
-    "DCFCache",
-    "FinancialsCache",
-    "GrowthCache",
-    "MarketDataCache",
-    "RatiosCache",
-    "SectorDataCache",
+    "CacheMissError",
+    "CALCULATED_KEEP",
+    "FETCHED_KEEP",
     "build_data_catalog",
-    "build_data_payload",
+    "find",
+    "merge_financials_data",
+    "now",
+    "purge",
     "tool_content",
+    "upsert",
 ]

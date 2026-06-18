@@ -45,44 +45,6 @@ def last_human_from_dialogue(state):
     return None
 
 
-def messages_for_llm(state) -> list:
-    messages = state.get("messages", [])
-    last_tool_call_ai_index = None
-    last_final_ai_index = None
-
-    for index, message in enumerate(messages):
-        if not isinstance(message, AIMessage):
-            continue
-        if getattr(message, "tool_calls", None):
-            last_tool_call_ai_index = index
-        else:
-            last_final_ai_index = index
-
-    include_active_tool_block = (
-        last_tool_call_ai_index is not None
-        and (
-            last_final_ai_index is None
-            or last_tool_call_ai_index > last_final_ai_index
-        )
-    )
-
-    filtered = []
-    for index, message in enumerate(messages):
-        if include_active_tool_block and index >= last_tool_call_ai_index:
-            filtered.append(message)
-            continue
-
-        if getattr(message, "type", None) == "tool":
-            continue
-        if getattr(message, "tool_calls", None):
-            continue
-
-        filtered.append(message)
-
-    return filtered
-
-
-
 def log_tool_calls(label: str, message: AIMessage) -> None:
     tool_calls = getattr(message, "tool_calls", None) or []
     if tool_calls:
