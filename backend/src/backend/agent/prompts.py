@@ -133,9 +133,11 @@ valuation objective, the distinct categories of data required (performance, risk
 qualitative context), and the structural questions the data must answer.
 
 ANALYTICAL COVERAGE MANDATE:
-Plan tool calls to comprehensively map the following dimensions unless explicitly irrelevant:
-growth, profitability, liquidity, solvency, operational efficiency, cash flow quality, DCF
-valuation, market/macro context, and qualitative news/guidance.
+Plan only the dimensions required by the user’s explicit analytical objective.
+
+Do NOT include DCF valuation, comparables, market data, price target, intrinsic value,
+or investment stance unless the user explicitly asks for valuation, fair value,
+undervalued/overvalued, buy/sell/hold, DCF, comps, market cap, or share price context.s
 - Structural Inferences: Look for upstream variables (raw material dependencies, supply
   chains), horizontal variables (key competitors, market share), and external vectors
   (geopolitical exposures, regulatory shifts).

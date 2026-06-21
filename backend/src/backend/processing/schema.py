@@ -247,6 +247,18 @@ class ValuationInputs(BaseModel):
         w_e = self.market_cap / (self.market_cap + self.total_debt)
         w_d = self.total_debt / (self.market_cap + self.total_debt)
         return (self.cost_of_capital * w_e) + (self.cost_of_debt * (1 - self.tax_rate) * w_d)
+    
+    @computed_field
+    @property
+    def debt_weight(self) -> float:
+        w_d = self.total_debt / (self.market_cap + self.total_debt)
+        return w_d
+    
+    @computed_field
+    @property
+    def equity_weight(self) -> float:
+        w_e = self.market_cap / (self.market_cap + self.total_debt)
+        return w_e
 
     @model_validator(mode="after")
     def check_wacc(self):
@@ -291,7 +303,6 @@ class DCFOutput(BaseModel):
     # WACC and components
     wacc: float | None = None
     cost_of_equity: float | None = None
-    cost_of_debt_after_tax: float | None = None
     risk_free_rate: float | None = None
     equity_risk_premium: float | None = None
     beta: float | None = None

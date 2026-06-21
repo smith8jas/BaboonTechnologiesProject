@@ -274,8 +274,8 @@ def run_dcf(
             # ── WACC + components ──
             wacc=wacc,
             terminal_growth=g,
-            cost_of_equity=getattr(inputs, "cost_of_equity", None),
-            cost_of_debt_after_tax=getattr(inputs, "cost_of_debt_after_tax", None),
+            cost_of_debt=getattr(inputs, "cost_of_debt", None),
+            cost_of_equity=getattr(inputs, "cost_of_capital", None),
             risk_free_rate=getattr(inputs, "risk_free_rate", None),
             equity_risk_premium=getattr(inputs, "equity_risk_premium", None),
             beta=getattr(inputs, "beta", None),
