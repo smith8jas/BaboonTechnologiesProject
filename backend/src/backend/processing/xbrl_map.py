@@ -229,6 +229,8 @@ CFS_MAPPINGS = {
     "net_income":                       ["ProfitLoss", "NetIncomeLoss", "NetIncome"],
     # Priority: expanded to catch TSLA and similar filers
     "depreciation_amortization":        [
+                                            "DepreciationAmortizationAndOther",        # MSFT
+                                            "DepreciationAmortizationAndImpairment",   # TSLA
                                             "DepreciationExpense",
                                             "DepreciationAndAmortization",
                                             "DepreciationDepletionAndAmortization",

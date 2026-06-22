@@ -181,7 +181,7 @@ class FinancialPeriod(BaseModel):
                     f"IS={ni_is:,.0f} CFS={ni_cf:,.0f} diff={diff:,.0f}"
                 )
         return self
-
+    
 
 class HistoricalFinancials(BaseModel):
     ticker: str

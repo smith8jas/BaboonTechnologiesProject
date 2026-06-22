@@ -1,3 +1,4 @@
+import pandas as pd
 from edgar import Company, set_identity
 from edgar.xbrl import XBRLS
 from backend.core.config import settings
@@ -7,6 +8,11 @@ STATEMENT_TYPES = {
     "balance_sheet":    "BalanceSheet",
     "cash_flow":        "CashFlowStatement",
 }
+
+_FALLBACK_CONCEPTS: frozenset[str] = frozenset({
+    "DepreciationAmortizationAndOther",       # MSFT
+    "DepreciationAmortizationAndImpairment",  # TSLA
+})
 
 
 class Edgar(Company):
@@ -28,18 +34,23 @@ class Edgar(Company):
         if statement not in STATEMENT_TYPES:
             raise ValueError(f"Unknown statement: {statement}")
 
-        df = (
-            self.xbrls(span).facts.query().to_dataframe()
-            .pipe(lambda d: d[d["statement_type"] == STATEMENT_TYPES[statement]])
-            .pipe(lambda d: d[d["standard_concept"].notna()])
-            .pipe(lambda d: d[~d["is_abstract"]])
-            .sort_values(["is_total", "level"], ascending=[False, True])
-            .drop_duplicates(subset=["standard_concept", "period_end"], keep="first")
-        )
+        def _resolve_key(row) -> str | None:
+            if pd.notna(row["standard_concept"]):
+                return row["standard_concept"]
+            stripped = row["concept"].split("_", 1)[1] if "_" in row["concept"] else row["concept"]
+            return stripped if stripped in _FALLBACK_CONCEPTS else None
+
+        df = self.xbrls(span).facts.query().to_dataframe()
+        df = df[df["statement_type"] == STATEMENT_TYPES[statement]]
+        df = df[~df["is_abstract"]]
+        df = df.sort_values(["is_total", "level"], ascending=[False, True])
+        df["_key"] = df.apply(_resolve_key, axis=1)
+        df = df[df["_key"].notna()]
+        df = df.drop_duplicates(subset=["_key", "period_end"], keep="first")
 
         out: dict[str, dict] = {}
         for _, row in df.iterrows():
-            out.setdefault(row["period_end"], {})[row["standard_concept"]] = row["numeric_value"]
+            out.setdefault(row["period_end"], {})[row["_key"]] = row["numeric_value"]
         return out
 
     def metadata(self) -> dict:
@@ -47,23 +58,16 @@ class Edgar(Company):
         addr = self.business_address() if callable(getattr(self, "business_address", None)) else None
 
         return {
-            # Identity
             "ticker": self.tickers[0] if self.tickers else "",
             "cik":    str(self.cik),
             "name":   self.name,
             "former_names": list(getattr(data, "former_names", []) or []),
-
-            # Classification — `industry` already IS the SIC description in edgartools
             "sic":             str(getattr(self, "sic", "") or "") or None,
             "industry":        getattr(self, "industry", None),
-
-            # Filing context
             "fiscal_year_end":         getattr(self, "fiscal_year_end", None),
             "entity_type":             getattr(data, "entity_type", None),
             "filer_category":          getattr(data, "category", None),
             "state_of_incorporation":  getattr(data, "state_of_incorporation", None),
-
-            # Contact
             "website": getattr(self, "website", None),
             "phone":   getattr(addr, "phone", None) if addr else None,
         }
