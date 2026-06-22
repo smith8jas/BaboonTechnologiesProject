@@ -382,6 +382,11 @@ button:disabled {
   font-weight: 850;
 }
 
+.auth-confirmation-action {
+  align-self: stretch;
+  padding: 0 16px;
+}
+
 .auth-switch {
   display: flex;
   flex-wrap: wrap;

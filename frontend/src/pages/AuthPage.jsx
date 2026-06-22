@@ -12,6 +12,12 @@ export default function AuthPage({ mode, navigate, onSignIn, onSignUp }) {
   const [password, setPassword] = React.useState('');
   const [signupSent, setSignupSent] = React.useState(false);
 
+  React.useEffect(() => {
+    setError('');
+    setIsSubmitting(false);
+    setSignupSent(false);
+  }, [mode]);
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError('');
@@ -19,7 +25,11 @@ export default function AuthPage({ mode, navigate, onSignIn, onSignUp }) {
 
     try {
       if (isSignup) {
-        await onSignUp({ displayName, email, password });
+        const data = await onSignUp({ displayName, email, password });
+        if (data?.session) {
+          navigate('/chat');
+          return;
+        }
         setSignupSent(true);
       } else {
         await onSignIn({ email, password });
@@ -64,7 +74,14 @@ export default function AuthPage({ mode, navigate, onSignIn, onSignUp }) {
               Supabase sent a confirmation link to <strong>{email}</strong>. Confirm it,
               then sign in here.
             </p>
-            <button type="button" onClick={() => navigate('/login')}>
+            <button
+              className="auth-confirmation-action"
+              type="button"
+              onClick={() => {
+                setSignupSent(false);
+                navigate('/login');
+              }}
+            >
               Go to Sign In
               <ArrowRight size={16} />
             </button>

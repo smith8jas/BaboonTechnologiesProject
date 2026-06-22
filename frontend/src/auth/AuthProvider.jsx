@@ -48,6 +48,7 @@ export function AuthProvider({ children }) {
         }
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        setSession(data.session ?? null);
         return data;
       },
       async signOut() {
@@ -71,6 +72,7 @@ export function AuthProvider({ children }) {
           },
         });
         if (error) throw error;
+        setSession(data.session ?? null);
         return data;
       },
     }),
