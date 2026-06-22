@@ -79,6 +79,7 @@ export default function App() {
     const saved = localStorage.getItem(THEME_KEY);
     return saved === 'light' || saved === 'dark' ? saved : 'dark';
   });
+  const lastBackendSuccessRef = React.useRef(0);
   const messagesEndRef = React.useRef(null);
 
   const activePath = ['/chat', '/login', '/signup', '/profile'].includes(path) ? path : '/';
@@ -107,7 +108,11 @@ export default function App() {
     async function updateHealth() {
       const isOnline = await checkHealth();
       if (!cancelled) {
-        setApiStatus(isOnline ? 'online' : 'offline');
+        if (isOnline) {
+          markApiOnline();
+        } else if (Date.now() - lastBackendSuccessRef.current > 60000) {
+          setApiStatus('offline');
+        }
       }
     }
 
@@ -136,7 +141,7 @@ export default function App() {
     }
 
     if ((activePath === '/login' || activePath === '/signup') && auth.isAuthenticated) {
-      navigate('/chat');
+      navigate('/');
     }
   }, [activePath, auth.isAuthenticated, auth.loading]);
 
@@ -154,6 +159,7 @@ export default function App() {
     async function loadSessions() {
       try {
         const rows = await listChatSessions({ accessToken: auth.accessToken });
+        markApiOnline();
         if (cancelled) {
           return;
         }
@@ -191,6 +197,7 @@ export default function App() {
     async function loadProfile() {
       try {
         const nextProfile = await getMe({ accessToken: auth.accessToken });
+        markApiOnline();
         if (!cancelled) {
           setProfile(nextProfile);
         }
@@ -221,6 +228,7 @@ export default function App() {
           accessToken: auth.accessToken,
           sessionId: activeSessionId,
         });
+        markApiOnline();
         if (!cancelled) {
           setMessagesBySessionId((current) => ({
             ...current,
@@ -259,6 +267,11 @@ export default function App() {
     setPath(nextPath);
   }
 
+  function markApiOnline() {
+    lastBackendSuccessRef.current = Date.now();
+    setApiStatus('online');
+  }
+
   async function handleSignOut() {
     await auth.signOut();
     setDraft('');
@@ -274,6 +287,7 @@ export default function App() {
       accessToken: auth.accessToken,
       profile: profileDraft,
     });
+    markApiOnline();
     setProfile(nextProfile);
     return nextProfile;
   }
@@ -288,6 +302,7 @@ export default function App() {
       accessToken: auth.accessToken,
       title: 'New research thread',
     });
+    markApiOnline();
     const session = normalizeSession(row);
     setSessions((current) => [session, ...current]);
     setMessagesBySessionId((current) => ({ ...current, [session.id]: [] }));
@@ -320,6 +335,7 @@ export default function App() {
       accessToken: auth.accessToken,
       sessionId,
     });
+    markApiOnline();
 
     setMessagesBySessionId((current) => {
       const next = { ...current };
@@ -358,6 +374,7 @@ export default function App() {
       accessToken: auth.accessToken,
       title: sessionTitle(text),
     });
+    markApiOnline();
     const session = normalizeSession(row);
     setSessions((current) => [session, ...current]);
     setMessagesBySessionId((current) => ({ ...current, [session.id]: [] }));
@@ -423,14 +440,17 @@ export default function App() {
         sessionId,
         threadId: session.threadId,
         onSessionId: (nextSessionId) => {
+          markApiOnline();
           if (nextSessionId && nextSessionId !== sessionId) {
             setActiveSessionId(nextSessionId);
           }
         },
         onThreadId: (threadId) => {
+          markApiOnline();
           updateSession(sessionId, (current) => ({ ...current, threadId }));
         },
         onStatus: (statusText) => {
+          markApiOnline();
           updateMessages(sessionId, (current) =>
             current.map((message) =>
               message.id === assistantMessageId ? { ...message, statusText } : message,
@@ -438,6 +458,7 @@ export default function App() {
           );
         },
         onThought: (thought) => {
+          markApiOnline();
           updateMessages(sessionId, (current) =>
             current.map((message) =>
               message.id === assistantMessageId
@@ -447,6 +468,7 @@ export default function App() {
           );
         },
         onClear: () => {
+          markApiOnline();
           streamedContent = '';
           updateMessages(sessionId, (current) =>
             current.map((message) =>
@@ -457,6 +479,7 @@ export default function App() {
           );
         },
         onDelta: (chunk) => {
+          markApiOnline();
           streamedContent += chunk;
           updateMessages(sessionId, (current) =>
             current.map((message) =>
@@ -471,6 +494,7 @@ export default function App() {
           );
         },
       });
+      markApiOnline();
 
       updateMessages(sessionId, (current) => {
         const next = current.map((message) =>

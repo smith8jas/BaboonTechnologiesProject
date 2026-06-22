@@ -27,13 +27,13 @@ export default function AuthPage({ mode, navigate, onSignIn, onSignUp }) {
       if (isSignup) {
         const data = await onSignUp({ displayName, email, password });
         if (data?.session) {
-          navigate('/chat');
+          navigate('/');
           return;
         }
         setSignupSent(true);
       } else {
         await onSignIn({ email, password });
-        navigate('/chat');
+        navigate('/');
       }
     } catch (err) {
       setError(err.message || 'Authentication failed.');
