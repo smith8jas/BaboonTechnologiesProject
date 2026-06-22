@@ -12,17 +12,16 @@ _NODE_DEFAULTS: dict[str, tuple[str, str]] = {
     "router":   ("openai",    "gpt-4o-mini"),
     
     # Planning benefits from reasoning. Sonnet 4.6 with extended thinking
-    "plan":     ("anthropic", "claude-sonnet-4-6"),
+    "plan":     ("openai", "gpt-4.1"),
 
     # Tool-calling + instruction adherence ("never invent data") is the hallucination locus. Sonnet 4.6 outperforms gpt-4.1 here.
-    "react":    ("anthropic", "claude-sonnet-4-6"),
+    "react":    ("openai", "gpt-4.1"),
 
     # Terse synthesis from grounded upstream output. Haiku is fine here.
     "response": ("anthropic", "claude-haiku-4-5-20251001"),
 
-    # Critical fix: judge must be >= react in capability or it rubber-stamps.
-    # Opus 4.7 for serious audit. Downgrade to sonnet-4-6 if cost matters.
-    "judge":    ("anthropic", "claude-opus-4-7"),
+    # Checking finished work is easier than creating new work
+    "judge":    ("openai", "gpt-4o-mini"),
 
     # Summarization on Groq — latency win, quality sufficient for scraping.
     "scrape":   ("groq",      "llama-3.3-70b-versatile"),
