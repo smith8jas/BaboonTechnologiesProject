@@ -392,6 +392,11 @@ function buildPdfPages(markdown, generatedAt) {
       return;
     }
 
+    if (block.type === 'rule') {
+      drawPdfRule({ currentPageRef: () => currentPage, addPage, ensureSpace });
+      return;
+    }
+
     if (block.type === 'heading') {
       if (block.level === 2) {
         sectionNumber += 1;
@@ -430,33 +435,34 @@ function createCoverPage({ title, reportKind, ticker, signal, metricCards, gener
   const left = PDF_PAGE.marginX;
   const right = PDF_PAGE.width - PDF_PAGE.marginX;
 
+  drawRect(commands, 0, 0, PDF_PAGE.width, PDF_PAGE.height, { fill: PDF_COLORS.white });
   drawText(commands, 'VALUATION DESK / EQUITY RESEARCH', left, 746, 7.4, 'monoBold', PDF_COLORS.faint);
   drawRightText(commands, 'CONFIDENTIAL / INTERNAL USE', right, 746, 7.4, 'monoBold', PDF_COLORS.faint);
   drawLine(commands, left, 728, right, 728, PDF_COLORS.ink, 1.1);
 
   drawText(commands, ticker ? `PUBLIC EQUITY / ${ticker}` : 'PUBLIC EQUITY / RESEARCH MEMO', left, 696, 8.6, 'monoBold', PDF_COLORS.red);
-  const afterTitleY = drawWrappedText(commands, title, left, 672, 340, {
+  const afterTitleY = drawWrappedText(commands, title, left, 672, 390, {
     size: 34,
     lineHeight: 36,
     font: 'serifBold',
     color: PDF_COLORS.ink,
     maxLines: 3,
   });
-  drawText(commands, reportKind, left, afterTitleY - 8, 13, 'serif', PDF_COLORS.muted);
+  const subtitleY = afterTitleY - 8;
+  drawText(commands, reportKind, left, subtitleY, 13, 'serif', PDF_COLORS.muted);
 
   drawText(commands, 'GENERATED', 420, 692, 7.4, 'monoBold', PDF_COLORS.faint);
   drawText(commands, generatedAt, 420, 677, 8, 'mono', PDF_COLORS.muted);
   drawText(commands, 'FORECAST BASIS', 420, 654, 7.4, 'monoBold', PDF_COLORS.faint);
   drawText(commands, reportKind.includes('DCF') ? '5-YR MODEL VIEW' : 'ANALYST SYNTHESIS', 420, 639, 8, 'monoBold', PDF_COLORS.ink);
 
-  drawHeroBand(commands, signal, 574);
-  drawMetricStrip(commands, metricCards, 500);
+  const heroY = Math.min(526, subtitleY - 102);
+  const metricY = heroY - 82;
 
-  drawText(commands, '01', left, 456, 8.5, 'monoBold', PDF_COLORS.red);
-  drawText(commands, 'Investment Thesis', left + 26, 456, 15.5, 'serifBold', PDF_COLORS.ink);
-  drawLine(commands, left, 446, right, 446, PDF_COLORS.ink, 1.1);
+  drawHeroBand(commands, signal, heroY);
+  drawMetricStrip(commands, metricCards, metricY);
 
-  return { commands, y: PDF_PAGE.coverBodyTop };
+  return { commands, y: metricY - 44 };
 }
 
 function createPdfPage({ title, sectionLabel, generatedAt }) {
@@ -464,6 +470,7 @@ function createPdfPage({ title, sectionLabel, generatedAt }) {
   const left = PDF_PAGE.marginX;
   const right = PDF_PAGE.width - PDF_PAGE.marginX;
 
+  drawRect(commands, 0, 0, PDF_PAGE.width, PDF_PAGE.height, { fill: PDF_COLORS.white });
   drawText(commands, headerTitle(title), left, 746, 7.4, 'monoBold', PDF_COLORS.faint);
   drawRightText(commands, sectionLabel || 'ANALYSIS', right, 746, 7.4, 'monoBold', PDF_COLORS.faint);
   drawText(commands, `Generated ${generatedAt}`, left, 724, 7, 'mono', PDF_COLORS.faint);
@@ -650,6 +657,19 @@ function drawPdfQuote({ block, currentPageRef, addPage, ensureSpace }) {
   currentPage.y = y - 10;
 }
 
+function drawPdfRule({ currentPageRef, addPage, ensureSpace }) {
+  ensureSpace(18, 8);
+  let currentPage = currentPageRef();
+
+  if (currentPage.y - 10 < PDF_PAGE.bodyBottom) {
+    addPage();
+    currentPage = currentPageRef();
+  }
+
+  drawLine(currentPage.commands, PDF_PAGE.marginX, currentPage.y, PDF_PAGE.width - PDF_PAGE.marginX, currentPage.y, PDF_COLORS.line, 0.8);
+  currentPage.y -= 14;
+}
+
 function drawPdfTable({ block, currentPageRef, setCurrentPage, addPage }) {
   let currentPage = currentPageRef();
   const width = PDF_PAGE.width - PDF_PAGE.marginX * 2;
@@ -750,6 +770,12 @@ function markdownToPdfBlocks(markdown) {
 
     if (!trimmed) {
       blocks.push({ type: 'space', height: 7 });
+      index += 1;
+      continue;
+    }
+
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      blocks.push({ type: 'rule' });
       index += 1;
       continue;
     }
@@ -862,6 +888,7 @@ function extractMetricCards(markdown) {
       continue;
     }
 
+    const header = parseMarkdownTableRow(row);
     const rows = [];
     let rowIndex = index + 2;
     while (rowIndex < lines.length && isMarkdownTableRow(lines[rowIndex].trim())) {
@@ -869,13 +896,18 @@ function extractMetricCards(markdown) {
       rowIndex += 1;
     }
 
+    const valueColumnIndex = metricValueColumnIndex(header);
+    if (valueColumnIndex === -1) {
+      continue;
+    }
+
     const cards = rows
-      .filter((cells) => cells.length >= 2)
+      .filter((cells) => cells.length > valueColumnIndex)
       .slice(0, 4)
       .map((cells) => ({
         label: cells[0],
-        value: cells[1],
-        note: cells.slice(2).join(' / '),
+        value: cells[valueColumnIndex],
+        note: valueColumnIndex > 1 ? header[valueColumnIndex] : cells[valueColumnIndex + 1] || '',
       }));
 
     if (cards.length) {
@@ -900,6 +932,30 @@ function padMetricCards(cards) {
   ];
 
   return [...cards, ...fallback].slice(0, 4);
+}
+
+function metricValueColumnIndex(header) {
+  if (!header?.length || header.length < 2) {
+    return -1;
+  }
+
+  const fiscalYearIndex = header.findLastIndex((cell, index) => index > 0 && /^(?:FY)?20\d{2}$|^FY\d{2}$/i.test(cell));
+  if (fiscalYearIndex > 0) {
+    return fiscalYearIndex;
+  }
+
+  const explicitValueIndex = header.findIndex((cell, index) => (
+    index > 0 && /\b(value|current|latest|amount|result|base case|actual)\b/i.test(cell)
+  ));
+  if (explicitValueIndex > 0) {
+    return explicitValueIndex;
+  }
+
+  if (header.length <= 3 && !/\b(year|fy|20\d{2})\b/i.test(header[1])) {
+    return 1;
+  }
+
+  return -1;
 }
 
 function stripMarkdown(value) {
@@ -1160,12 +1216,14 @@ function inferReportKind(title, markdown) {
 }
 
 function inferTicker(title, markdown) {
-  const text = `${title} ${markdown || ''}`;
-  const parenthetical = text.match(/\(([A-Z][A-Z0-9.]{0,5})\)/)?.[1];
-  if (parenthetical) {
+  const titleText = String(title || '');
+  const firstHeading = String(markdown || '').match(/^#\s+(.+)$/m)?.[1] || titleText;
+  const parenthetical = firstHeading.match(/\(([A-Z][A-Z0-9.]{0,5})\)/)?.[1];
+  if (isLikelyTicker(parenthetical)) {
     return parenthetical;
   }
-  return text.match(/\b([A-Z]{1,5})(?:\s+Deep Analysis|\s+Investment Report|\s+Valuation|\s+DCF)\b/)?.[1] || '';
+  const leadingTicker = firstHeading.match(/^([A-Z][A-Z0-9.]{0,5})\b(?:\s+Deep Analysis|\s+Investment Report|\s+Valuation|\s+DCF|\s+Report)/)?.[1];
+  return isLikelyTicker(leadingTicker) ? leadingTicker : '';
 }
 
 function inferSignal(markdown) {
@@ -1180,6 +1238,10 @@ function inferSignal(markdown) {
     return 'NEUTRAL';
   }
   return 'ANALYSIS';
+}
+
+function isLikelyTicker(value) {
+  return Boolean(value) && !/^FY\d{2,4}$/i.test(value) && !/^(?:DCF|EPS|EBIT|EBITDA|FCF|ROIC|WACC)$/i.test(value);
 }
 
 function slugify(value) {
