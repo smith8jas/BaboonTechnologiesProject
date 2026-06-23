@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 def latest_human_message_content(state) -> str:
+    for message in reversed(state.get("dialogue", [])):
+        if isinstance(message, HumanMessage):
+            return message.content
+
     for message in reversed(state.get("messages", [])):
         if isinstance(message, HumanMessage):
             return message.content
