@@ -46,10 +46,7 @@ export default function ProfilePage({
     setIsSaving(true);
 
     try {
-      await onSaveProfile({
-        ...draft,
-        age: draft.age === '' ? null : Number(draft.age),
-      });
+      await onSaveProfile(draft);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1800);
     } catch (err) {
@@ -72,7 +69,7 @@ export default function ProfilePage({
       <ChatDataBackground />
 
       <header className="profile-topbar">
-        <button className="topbar-icon" type="button" onClick={() => navigate('/chat')} title="Back to chat">
+        <button className="topbar-icon" type="button" onClick={() => navigate('/')} title="Back to homepage">
           <ArrowLeft size={18} />
         </button>
         <button className="profile-brand" type="button" onClick={() => navigate('/')}>
@@ -192,8 +189,8 @@ export default function ProfilePage({
           {error && <p className="auth-error">{error}</p>}
 
           <div className="profile-actions">
-            <button type="button" className="ghost-action" onClick={() => navigate('/chat')}>
-              Back to Chat
+            <button type="button" className="ghost-action" onClick={() => navigate('/')}>
+              Back to Home
             </button>
             <button className="auth-submit" type="submit" disabled={isSaving}>
               {saved ? <Check size={16} /> : <Save size={16} />}

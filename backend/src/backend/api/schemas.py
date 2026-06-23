@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.processing.schema import Assumptions, DCFOutput, ValuationInputs
 
@@ -66,6 +66,23 @@ class UserProfileUpdateRequest(BaseModel):
     role_title: str | None = Field(default=None, max_length=120)
     company: str | None = Field(default=None, max_length=120)
     bio: str | None = Field(default=None, max_length=600)
+
+    @field_validator(
+        "display_name",
+        "avatar_url",
+        "username",
+        "full_name",
+        "age",
+        "role_title",
+        "company",
+        "bio",
+        mode="before",
+    )
+    @classmethod
+    def blank_strings_are_none(cls, value):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class ChatSessionCreateRequest(BaseModel):

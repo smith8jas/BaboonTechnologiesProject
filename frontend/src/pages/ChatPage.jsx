@@ -16,6 +16,7 @@ export default function ChatPage({
   navigate,
   onDeleteSession,
   onOpenProfile,
+  onRenameSession,
   onSignOut,
   onToggleTheme,
   selectSession,
@@ -58,6 +59,7 @@ export default function ChatPage({
         activeSessionId={activeSessionId}
         isOpen={isMobileSidebarOpen}
         onDeleteSession={onDeleteSession}
+        onRenameSession={onRenameSession}
         onSelectSession={handleSelectSession}
         onStartNewChat={handleStartNewChat}
         sessions={sessions}

@@ -1231,7 +1231,7 @@ button:disabled {
 
 .session-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 6px;
   padding: 6px;
@@ -1272,7 +1272,7 @@ button:disabled {
   font-size: 11px;
 }
 
-.session-delete {
+.session-action {
   width: 30px;
   height: 30px;
   display: grid;
@@ -1289,15 +1289,52 @@ button:disabled {
     background 140ms ease;
 }
 
-.session-item:hover .session-delete,
-.session-item:focus-within .session-delete {
+.session-item:hover .session-action,
+.session-item:focus-within .session-action,
+.session-item.editing .session-action {
   opacity: 1;
+}
+
+.session-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.session-rename:hover {
+  border-color: rgba(147, 197, 253, 0.32);
+  color: var(--text);
+  background: rgba(147, 197, 253, 0.08);
 }
 
 .session-delete:hover {
   border-color: rgba(248, 113, 113, 0.35);
   color: var(--red);
   background: rgba(248, 113, 113, 0.09);
+}
+
+.session-edit-form {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+}
+
+.session-edit-form input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  font-weight: 760;
+  outline: none;
+}
+
+.session-edit-form input:focus {
+  border-color: rgba(147, 197, 253, 0.52);
+  box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.12);
 }
 
 .chat-main-panel {

@@ -8,6 +8,7 @@ import {
   listChatMessages,
   listChatSessions,
   streamChatMessage,
+  updateChatSession,
   updateMe,
 } from './api/client.js';
 import { useAuth } from './auth/AuthProvider.jsx';
@@ -285,7 +286,7 @@ export default function App() {
   async function saveProfile(profileDraft) {
     const nextProfile = await updateMe({
       accessToken: auth.accessToken,
-      profile: profileDraft,
+      profile: profilePayloadFromDraft(profileDraft),
     });
     markApiOnline();
     setProfile(nextProfile);
@@ -350,6 +351,32 @@ export default function App() {
       }
       return nextSessions;
     });
+  }
+
+  async function renameSession(sessionId, title) {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) {
+      return;
+    }
+
+    const previous = sessions.find((item) => item.id === sessionId);
+    updateSession(sessionId, (current) => ({ ...current, title: cleanTitle }));
+
+    try {
+      const row = await updateChatSession({
+        accessToken: auth.accessToken,
+        sessionId,
+        title: cleanTitle,
+      });
+      markApiOnline();
+      const renamed = normalizeSession(row);
+      updateSession(sessionId, (current) => ({ ...current, ...renamed }));
+    } catch (error) {
+      if (previous) {
+        updateSession(sessionId, () => previous);
+      }
+      throw error;
+    }
   }
 
   function updateMessages(sessionId, updater) {
@@ -569,6 +596,7 @@ export default function App() {
           navigate={navigate}
           onOpenProfile={() => navigate('/profile')}
           onDeleteSession={removeSession}
+          onRenameSession={renameSession}
           onSignOut={handleSignOut}
           onToggleTheme={toggleTheme}
           selectSession={selectSession}
@@ -596,4 +624,34 @@ export default function App() {
       )}
     </main>
   );
+}
+
+function profilePayloadFromDraft(draft) {
+  return {
+    display_name: blankToNull(draft.display_name),
+    username: blankToNull(draft.username),
+    full_name: blankToNull(draft.full_name),
+    age: numberOrNull(draft.age),
+    role_title: blankToNull(draft.role_title),
+    company: blankToNull(draft.company),
+    avatar_url: blankToNull(draft.avatar_url),
+    bio: blankToNull(draft.bio),
+  };
+}
+
+function blankToNull(value) {
+  return typeof value === 'string' && !value.trim() ? null : value;
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string' && !value.trim()) {
+    return null;
+  }
+
+  const numberValue = Number(value);
+  return Number.isNaN(numberValue) ? null : numberValue;
 }
