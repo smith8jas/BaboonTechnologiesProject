@@ -6,8 +6,13 @@ of dicts, deduped by an `identifier` tuple — e.g. ("financials", "AAPL") or
 entries at most), so a linear scan is simpler than maintaining a dict index.
 
 Every entry has the same shape:
-    {"tool": str, "identifier": tuple, "ticker": str | None,
-     "cycle": int, "last_updated": str, "data": dict}
+    {"tool": str, "identifier": tuple, "ticker": str | None, "cycle": int,
+     "last_updated": str, "data": dict, "data_source": str}
+
+`data_source` names the real upstream provenance of `data` (e.g. "SEC EDGAR",
+"Yahoo Finance", "Damodaran (NYU Stern)", "FRED") rather than the internal
+tool/function name — response_node cites this verbatim instead of asking the
+LLM to infer a source from the tool name.
 
 `data` is exactly what the tool returns under its "data" key — the same
 content shown to the LLM as ToolMessage content. There is no separate
@@ -58,6 +63,7 @@ def upsert(
     ticker: str | None,
     cycle: int,
     data: dict[str, Any],
+    data_source: str,
     merge: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Replace the entry with this identifier (merging if `merge` is given) or append a new one.
@@ -71,6 +77,7 @@ def upsert(
             existing["data"] = merge(existing["data"], data) if merge else data
             existing["cycle"] = cycle
             existing["last_updated"] = now()
+            existing["data_source"] = data_source
             return existing
 
         entry = {
@@ -80,6 +87,7 @@ def upsert(
             "cycle": cycle,
             "last_updated": now(),
             "data": data,
+            "data_source": data_source,
         }
         messages.append(entry)
         return entry

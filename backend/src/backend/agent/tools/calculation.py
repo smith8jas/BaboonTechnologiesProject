@@ -71,6 +71,7 @@ def get_income_statement_growth_rates(
     entry = upsert(
         calculated_messages, tool="get_income_statement_growth_rates",
         identifier=("growth", t, SUBDOMAIN_INCOME_STATEMENT), ticker=t, cycle=cycle, data=result,
+        data_source="SEC EDGAR (calculated)",
     )
     log_cache_status("get_income_statement_growth_rates", False, ticker=t, span=span)
     return {"source": "calculated", "data": entry["data"]}
@@ -102,6 +103,7 @@ def get_balance_sheet_growth_rates(
     entry = upsert(
         calculated_messages, tool="get_balance_sheet_growth_rates",
         identifier=("growth", t, SUBDOMAIN_BALANCE_SHEET), ticker=t, cycle=cycle, data=result,
+        data_source="SEC EDGAR (calculated)",
     )
     log_cache_status("get_balance_sheet_growth_rates", False, ticker=t, span=span)
     return {"source": "calculated", "data": entry["data"]}
@@ -131,6 +133,7 @@ def get_liquidity_ratios(
     entry = upsert(
         calculated_messages, tool="get_liquidity_ratios",
         identifier=("ratios", t, SUBDOMAIN_LIQUIDITY), ticker=t, cycle=cycle, data=result,
+        data_source="SEC EDGAR (calculated)",
     )
     log_cache_status("get_liquidity_ratios", False, ticker=t, span=span)
     return {"source": "calculated", "data": entry["data"]}
@@ -161,6 +164,7 @@ def get_solvency_ratios(
     entry = upsert(
         calculated_messages, tool="get_solvency_ratios",
         identifier=("ratios", t, SUBDOMAIN_SOLVENCY), ticker=t, cycle=cycle, data=result,
+        data_source="SEC EDGAR (calculated)",
     )
     log_cache_status("get_solvency_ratios", False, ticker=t, span=span)
     return {"source": "calculated", "data": entry["data"]}
@@ -197,6 +201,7 @@ def get_profitability_ratios(
     entry = upsert(
         calculated_messages, tool="get_profitability_ratios",
         identifier=("ratios", t, SUBDOMAIN_PROFITABILITY), ticker=t, cycle=cycle, data=result,
+        data_source="SEC EDGAR (calculated)",
     )
     log_cache_status("get_profitability_ratios", False, ticker=t, span=span)
     return {"source": "calculated", "data": entry["data"]}
@@ -235,6 +240,7 @@ def get_efficiency_ratios(
     entry = upsert(
         calculated_messages, tool="get_efficiency_ratios",
         identifier=("ratios", t, SUBDOMAIN_EFFICIENCY), ticker=t, cycle=cycle, data=result,
+        data_source="SEC EDGAR (calculated)",
     )
     log_cache_status("get_efficiency_ratios", False, ticker=t, span=span)
     return {"source": "calculated", "data": entry["data"]}
@@ -303,6 +309,7 @@ def run_dcf_valuation(
         calculated_messages, tool="run_dcf_valuation",
         identifier=("dcf", t, SCENARIO_DEFAULT), ticker=t, cycle=cycle,
         data=result.model_dump(mode="json"),
+        data_source="SEC EDGAR, Yahoo Finance, FRED, Damodaran (NYU Stern) — DCF model output",
     )
     log_cache_status("run_dcf_valuation", False, ticker=t, span=span, year=year)
     return {"source": "calculated", "data": entry["data"]}
@@ -365,6 +372,7 @@ def get_comps_valuation(
 
         result = comparables_service.peer_comps(target_fin, target_mkt, resolved, dropped)
         identifier = ("comparables", t, "peer", peer_key)
+        comps_source = "SEC EDGAR, Yahoo Finance (peer comparables)"
     else:
         industry, notes = comparables_service.resolve_damodaran_industry(target_fin)
         if industry is None:
@@ -382,11 +390,16 @@ def get_comps_valuation(
             dam_entry = upsert(
                 research_messages, tool="get_comps_valuation",
                 identifier=("damodaran_sector", industry), ticker=None, cycle=cycle, data=sector_multiples,
+                data_source="Damodaran (NYU Stern)",
             )
 
         result = comparables_service.damodaran_fallback(target_fin, target_mkt, industry, notes, dam_entry["data"])
         identifier = ("comparables", t, "damodaran", None)
+        comps_source = "SEC EDGAR, Yahoo Finance, Damodaran (NYU Stern) — sector multiples fallback"
 
-    entry = upsert(calculated_messages, tool="get_comps_valuation", identifier=identifier, ticker=t, cycle=cycle, data=result)
+    entry = upsert(
+        calculated_messages, tool="get_comps_valuation", identifier=identifier, ticker=t, cycle=cycle,
+        data=result, data_source=comps_source,
+    )
     log_cache_status("get_comps_valuation", False, ticker=t)
     return {"source": "calculated", "data": entry["data"]}
