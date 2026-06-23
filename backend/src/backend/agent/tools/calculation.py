@@ -57,7 +57,10 @@ def get_income_statement_growth_rates(
     Calculate year-over-year income statement growth rates across the latest span fiscal periods.
 
     Covers revenue, gross profit, EBIT, and net income. All fields are historical
-    percentage changes, not forward projections.
+    percentage changes, not forward projections. Each fiscal_year key holds that single
+    period's change versus the immediately preceding period only — never a multi-year
+    average or cumulative change. (Contrast with run_dcf_valuation's assumption_revenue_growth,
+    which IS a multi-period average — do not conflate the two.)
 
     Prerequisites: income statement values for ticker across span periods retrieved via
     get_financials(ticker, span).
@@ -89,7 +92,9 @@ def get_balance_sheet_growth_rates(
     Calculate year-over-year balance sheet growth rates across the latest span fiscal periods.
 
     Covers total assets, equity, debt, and working capital. All fields are historical
-    percentage changes, not forward projections.
+    percentage changes, not forward projections. Each fiscal_year key holds that single
+    period's change versus the immediately preceding period only — never a multi-year
+    average or cumulative change.
 
     Prerequisites: balance sheet values for ticker across span periods retrieved via
     get_financials(ticker, span).
@@ -282,6 +287,22 @@ def run_dcf_valuation(
                                        rate + 150bps. WACC and all downstream valuation
                                        outputs carry additional model risk — state this
                                        explicitly when reporting results.
+        assumption_revenue_growth      The single flat growth rate applied to every projected
+                                       year. It is the AVERAGE of the year-over-year revenue
+                                       growth rates across assumption_span_years of historical
+                                       periods (e.g. 4 YoY deltas averaged if span=5) — not the
+                                       most recent single fiscal year's growth. Never describe
+                                       it as "last year's growth" or conflate it with the most
+                                       recent entry from get_income_statement_growth_rates;
+                                       those are a different, single-period number.
+        assumption_ebit_margin,
+        assumption_da_over_revenue,
+        assumption_capex_over_revenue,
+        assumption_nwc_over_revenue     Same convention: each is a flat historical average over
+                                       assumption_span_years periods, held constant across every
+                                       projected year. Not a trend, not a single-period actual.
+        assumption_span_years          Number of historical fiscal periods averaged into the
+                                       five assumption_* fields above.
     """
     t = ticker.strip().upper()
     year = int(year or date.today().year)

@@ -17,7 +17,7 @@ _NODE_MESSAGES: dict[str, str] = {
     "plan":     "dialogue",
     "react":    "last_human_and_tool_block",
     "response": "dialogue_and_tool_block",
-    "judge":    "dialogue",
+    "judge":    "last_human",
     "scrape":   "none",
 }
 
@@ -32,6 +32,9 @@ def _resolve_messages(state, node: str) -> list:
         human = last_human_from_dialogue(state)
         block = current_tool_block(state)
         return ([human] if human else []) + block
+    if strategy == "last_human":
+        human = last_human_from_dialogue(state)
+        return [human] if human else []
     return []
 
 
@@ -42,7 +45,7 @@ _NODE_CONTEXT: dict[str, set[str]] = {
     "plan":     {"available_tools", "cached_data_catalog"},
     "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale"},
     "response": {"scrape_history", "forced_response_due_to_recursion"},
-    "judge":    set(),
+    "judge":    {"cached_data_catalog"},
     "scrape":   {"scrape_history"},
 }
 

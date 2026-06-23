@@ -17,7 +17,9 @@ import pytest
 
 from backend.agent.constants import DEFAULT_RECURSION_LIMIT
 from backend.agent.edges import route_after_plan, route_after_react, route_after_router
+from backend.agent.llm import build_system_prompt
 from backend.agent.nodes.router import RouterDecision
+from backend.agent.prompts import response_prompt
 from backend.agent.runtime import should_force_response
 
 
@@ -120,3 +122,46 @@ def test_should_not_force_response_well_within_limit():
 def test_should_not_force_response_missing_step():
     config = {"recursion_limit": 12, "configurable": {"turn_start_step": 0}}
     assert should_force_response(config) is False
+
+
+# ---------------------------------------------------------------------------
+# Judge context
+# ---------------------------------------------------------------------------
+
+def test_judge_receives_cached_data_catalog():
+    state = {
+        "context": "",
+        "current_year": 2026,
+        "data_catalog": {
+            "companies": [
+                {
+                    "ticker": "TSLA",
+                    "searched": {},
+                    "calculated": {
+                        "dcf": {
+                            "default": {
+                                "available": True,
+                                "summary": "Run a full DCF valuation.",
+                            }
+                        }
+                    },
+                }
+            ],
+            "global": {"sector_data_years": [2026]},
+        },
+    }
+
+    blocks = build_system_prompt(state, "judge instructions", node="judge")
+    runtime_context = blocks[1]["text"]
+
+    assert "cached_data_catalog" in runtime_context
+    assert '"ticker": "TSLA"' in runtime_context
+    assert '"dcf"' in runtime_context
+    assert '"available": true' in runtime_context
+
+
+def test_response_prompt_forbids_named_self_computed_ratios():
+    assert "Named Ratio Boundary" in response_prompt
+    assert "current ratio" in response_prompt
+    assert "do not tag it [SUPPORTED]" in response_prompt
+    assert "This exception does not permit named financial ratios" in response_prompt

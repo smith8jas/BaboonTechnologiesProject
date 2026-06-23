@@ -7,7 +7,7 @@ Python FastAPI backend for the BABON financial analysis platform. Combines a Lan
 - **Runtime**: Python 3.11+, managed with `uv`
 - **API**: FastAPI + Uvicorn
 - **Agent**: LangGraph `StateGraph` with `MemorySaver` checkpointing
-- **LLM**: per-node provider/model configured in `backend/core/llm.py` — OpenAI (`router`, `plan`, `react`, `judge`), Anthropic (`response`), Groq (`scrape`); override per node with `<NODE>_LLM_PROVIDER` / `<NODE>_LLM_MODEL` env vars
+- **LLM**: per-node provider/model configured in `backend/core/llm.py` — OpenAI (`router`, `plan`, `react`, `judge`, `scrape`), Anthropic (`response`); override per node with `<NODE>_LLM_PROVIDER` / `<NODE>_LLM_MODEL` env vars
 - **Data sources**: SEC EDGAR (10-K filings), Yahoo Finance (market data), FRED DGS10 (risk-free rate), Damodaran (sector assumptions), DuckDuckGo (web scraping)
 
 ## Run

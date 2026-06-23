@@ -8,23 +8,23 @@ load_dotenv(find_dotenv())
 LLM_MAX_TOKENS = os.getenv("LLM_MAX_TOKENS")
 
 _NODE_DEFAULTS: dict[str, tuple[str, str]] = {
-    # Cheap classifier; routing is single-token. No need to burn frontier tokens here.
-    "router":   ("openai",    "gpt-4o-mini"),
-    
-    # Planning benefits from reasoning. Sonnet 4.6 with extended thinking
-    "plan":     ("openai", "gpt-4.1"),
+    # Depth routing is high leverage: false "deep" flags make the whole graph slower/costlier.
+    "router":   ("openai",    "gpt-4.1"),
 
-    # Tool-calling + instruction adherence ("never invent data") is the hallucination locus. Sonnet 4.6 outperforms gpt-4.1 here.
-    "react":    ("openai", "gpt-4.1"),
+    # Strong instruction following for tool selection, dependency coverage, and scope control.
+    "plan":     ("openai",    "gpt-4.1"),
 
-    # Terse synthesis from grounded upstream output. Haiku is fine here.
-    "response": ("anthropic", "claude-haiku-4-5-20251001"),
+    # Tool-aware reasoning; this node patches gaps and decides whether collection is complete.
+    "react":    ("openai",    "gpt-4.1"),
 
-    # Checking finished work is easier than creating new work
-    "judge":    ("openai", "gpt-4o-mini"),
+    # Highest-value node: financial synthesis, assumption audit, and grounded interpretation.
+    "response": ("anthropic", "claude-sonnet-4-6"),
 
-    # Summarization on Groq — latency win, quality sufficient for scraping.
-    "scrape":   ("groq",      "llama-3.3-70b-versatile"),
+    # Bad critiques trigger loops, so use a strong judge even though synthesis lives elsewhere.
+    "judge":    ("openai",    "gpt-4.1"),
+
+    # External research needs critical query design, but should stay cost-controlled.
+    "scrape":   ("openai",    "gpt-5.4-mini"),
 }
 
 

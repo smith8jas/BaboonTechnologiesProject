@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 from ..llm import invoke_llm
 from ..prompts import deep_response_prompt, judge_response_addendum, response_prompt
 from ..state import AgentState
+from ..tools import TOOLS_BY_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,14 @@ async def response_node(state: AgentState):
         "research": _project(state.get("research_messages", [])),
         "calculated": _project(state.get("calculated_messages", [])),
     }
+
+    #Surfaces each tool's own docstring (timeframe conventions, null-field caveats,
+    #averaging behavior, etc.) for only the tools that actually produced data this
+    #conversation — self-updating, since it reads the live docstring rather than a
+    #copy maintained in the prompt.
+    used_tools = {e["tool"] for e in payload["research"]} | {e["tool"] for e in payload["calculated"]}
+    if notes := {name: TOOLS_BY_NAME[name].description for name in used_tools if name in TOOLS_BY_NAME}:
+        payload = {**payload, "tool_methodology": notes}
 
     #Gets access to plan node's rationale for tool selection and appends it to payload
     if guidance := state.get("tool_guidance"):

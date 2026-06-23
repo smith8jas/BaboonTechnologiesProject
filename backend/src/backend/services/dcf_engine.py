@@ -221,6 +221,7 @@ def run_dcf(
     years       = inputs.projection_years
     wacc        = inputs.wacc
     g           = inputs.long_term_growth_rate
+    span_years  = len(hf.periods)
  
     # 1. Project
     revenue   = project_revenue(base_rev, assumptions.revenue_growth, years)
@@ -282,4 +283,12 @@ def run_dcf(
             tax_rate=getattr(assumptions, "tax_rate", None),
             equity_weight=getattr(inputs, "equity_weight", None),
             debt_weight=getattr(inputs, "debt_weight", None),
+            # Projection assumptions: flat rates averaged over span_years of
+            # history, applied identically to every projected year.
+            assumption_span_years=span_years,
+            assumption_revenue_growth=assumptions.revenue_growth,
+            assumption_ebit_margin=assumptions.ebit_margin,
+            assumption_da_over_revenue=assumptions.depreciation_and_amortization_over_revenue,
+            assumption_capex_over_revenue=assumptions.capex_over_revenue,
+            assumption_nwc_over_revenue=assumptions.nwc_over_revenue,
         )

@@ -310,3 +310,13 @@ class DCFOutput(BaseModel):
     equity_weight: float | None = None
     debt_weight: float | None = None
     terminal_growth: float | None = None
+
+    # Projection assumptions: each is a single flat rate averaged across
+    # assumption_span_years of historical periods, then applied identically to
+    # every projected year — never the latest single-year actual.
+    assumption_span_years:           int | None = None
+    assumption_revenue_growth:       float | None = None
+    assumption_ebit_margin:          float | None = None
+    assumption_da_over_revenue:      float | None = None
+    assumption_capex_over_revenue:   float | None = None
+    assumption_nwc_over_revenue:     float | None = None
