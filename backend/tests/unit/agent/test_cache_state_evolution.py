@@ -60,10 +60,18 @@ def _mock_sd() -> SectorData:
     return SectorData(equity_risk_premium=0.05, long_term_growth_rate=0.025)
 
 
-def _entry(tool: str, identifier: tuple, ticker: str | None, data: dict, cycle: int = 1) -> dict:
+def _entry(
+    tool: str,
+    identifier: tuple,
+    ticker: str | None,
+    data: dict,
+    cycle: int = 1,
+    data_source: str = "Test source",
+) -> dict:
     return {
         "tool": tool, "identifier": identifier, "ticker": ticker,
         "cycle": cycle, "last_updated": "2024-01-01T00:00:00+00:00", "data": data,
+        "data_source": data_source,
     }
 
 
@@ -73,15 +81,15 @@ def _entry(tool: str, identifier: tuple, ticker: str | None, data: dict, cycle: 
 
 def test_upsert_appends_new_entry():
     messages: list[dict] = []
-    entry = upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=1, data={"a": 1})
+    entry = upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=1, data={"a": 1}, data_source="Test source")
     assert messages == [entry]
     assert entry["data"] == {"a": 1}
 
 
 def test_upsert_replaces_existing_entry_by_identifier():
     messages: list[dict] = []
-    upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=1, data={"a": 1})
-    upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=2, data={"a": 2})
+    upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=1, data={"a": 1}, data_source="Test source")
+    upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=2, data={"a": 2}, data_source="Test source")
     assert len(messages) == 1
     assert messages[0]["data"] == {"a": 2}
     assert messages[0]["cycle"] == 2
@@ -90,8 +98,8 @@ def test_upsert_replaces_existing_entry_by_identifier():
 def test_upsert_merge_combines_old_and_new():
     messages: list[dict] = []
     combine = lambda old, new: {"v": old["v"] + new["v"]}
-    upsert(messages, tool="t", identifier=("k", "X"), ticker="X", cycle=1, data={"v": [1]}, merge=combine)
-    upsert(messages, tool="t", identifier=("k", "X"), ticker="X", cycle=2, data={"v": [2]}, merge=combine)
+    upsert(messages, tool="t", identifier=("k", "X"), ticker="X", cycle=1, data={"v": [1]}, data_source="Test source", merge=combine)
+    upsert(messages, tool="t", identifier=("k", "X"), ticker="X", cycle=2, data={"v": [2]}, data_source="Test source", merge=combine)
     assert len(messages) == 1
     assert messages[0]["data"]["v"] == [1, 2]
 
@@ -115,7 +123,7 @@ def test_find_matches_identifier_deserialized_as_list():
 
 def test_upsert_replaces_list_identifier_entry_when_looked_up_by_tuple():
     messages = [_entry("get_financials", ["financials", "AAPL"], "AAPL", {"a": 1})]
-    upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=2, data={"a": 2})
+    upsert(messages, tool="get_financials", identifier=("financials", "AAPL"), ticker="AAPL", cycle=2, data={"a": 2}, data_source="Test source")
     assert len(messages) == 1
     assert messages[0]["data"] == {"a": 2}
 
@@ -133,7 +141,7 @@ def test_upsert_is_safe_under_concurrent_writers_to_the_same_identifier():
 
     def writer(n: int) -> None:
         barrier.wait()
-        upsert(messages, tool="t", identifier=("k", "X"), ticker="X", cycle=n, data={"v": n})
+        upsert(messages, tool="t", identifier=("k", "X"), ticker="X", cycle=n, data={"v": n}, data_source="Test source")
 
     threads = [threading.Thread(target=writer, args=(n,)) for n in range(20)]
     for t in threads:
@@ -621,15 +629,48 @@ def test_tools_node_unknown_tool_returns_error_message():
 # Part 7 — response_node reads research/calculated messages directly
 # ---------------------------------------------------------------------------
 
-from backend.agent.nodes.response import _project
+from backend.agent.nodes.response import _methodology_notes, _project, _sanitize_internal_names
 
 
 def test_response_project_drops_bookkeeping_fields():
     entries = [_entry("get_financials", ("financials", "AAPL"), "AAPL", {"periods": []}, cycle=3)]
     projected = _project(entries)
-    assert projected == [{"ticker": "AAPL", "identifier": ("financials", "AAPL"), "data": {"periods": []}}]
+    assert projected == [
+        {
+            "ticker": "AAPL",
+            "identifier": ("financials", "AAPL"),
+            "data": {"periods": []},
+            "data_source": "Test source",
+            "methodology_label": "Financial statement data",
+        }
+    ]
     assert "cycle" not in projected[0]
     assert "tool" not in projected[0]
+    assert "last_updated" not in projected[0]
+
+
+def test_response_methodology_notes_use_public_labels_and_sanitized_text():
+    entries = [
+        _entry("get_financials", ("financials", "AAPL"), "AAPL", {"periods": []}),
+        _entry("run_dcf_valuation", ("dcf", "AAPL", "default"), "AAPL", {"intrinsic_value_per_share": 100}),
+    ]
+
+    notes = _methodology_notes(entries)
+
+    assert "Financial statement data" in notes
+    assert "DCF valuation model" in notes
+    joined = json.dumps(notes)
+    assert "get_financials" not in joined
+    assert "run_dcf_valuation" not in joined
+
+
+def test_response_sanitizes_legacy_internal_function_names():
+    text = _sanitize_internal_names("Per dcf_func and run_dcf_valuation, this uses get_financials(ticker, span).")
+
+    assert "dcf_func" not in text
+    assert "run_dcf_valuation" not in text
+    assert "get_financials" not in text
+    assert "DCF valuation model" in text
 
 
 def test_response_node_payload_contains_full_history_not_just_latest_round():
@@ -659,3 +700,6 @@ def test_response_node_payload_contains_full_history_not_just_latest_round():
 
     tickers_seen = {e["ticker"] for e in captured["payload"]["research"]}
     assert tickers_seen == {"AAPL", "MSFT"}
+    joined = json.dumps(captured["payload"], default=str)
+    assert "get_financials" not in joined
+    assert "methodology" in captured["payload"]

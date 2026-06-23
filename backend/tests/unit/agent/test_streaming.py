@@ -34,7 +34,7 @@ def _response_token(content: str) -> tuple:
 
 
 def _router_direct_answer(content: str) -> tuple:
-    return ("updates", {"router": {"router_route": "end", "messages": [AIMessage(content=content)]}})
+    return ("updates", {"router": {"router_route": "end", "dialogue": [AIMessage(content=content)]}})
 
 
 def _make_agent(stream_items: list, fallback_content: str = "") -> MagicMock:
@@ -46,7 +46,7 @@ def _make_agent(stream_items: list, fallback_content: str = "") -> MagicMock:
 
     async def aget_state(*_args, **_kwargs):
         last_msg = AIMessage(content=fallback_content) if fallback_content else None
-        state_values = {"messages": [last_msg]} if last_msg else {"messages": []}
+        state_values = {"dialogue": [last_msg]} if last_msg else {"dialogue": []}
         return MagicMock(values=state_values, metadata={"step": -1})
 
     agent.astream = astream
@@ -87,8 +87,6 @@ def test_stream_emits_status_thoughts_and_token_deltas():
     assert GROUP_LABELS["financial_statement"] in status_texts
     assert GROUP_LABELS["market_data"] in status_texts
     assert "Almost ready..." in status_texts
-    assert any("Requesting:" in text for text in thought_texts)
-    assert any(text.startswith("Retrieved:") for text in thought_texts)
     assert "Composing response" in thought_texts
     assert delta_texts == ["Here is", " the answer."]
 

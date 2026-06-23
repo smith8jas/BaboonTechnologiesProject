@@ -14,10 +14,11 @@ get_financials directly.
 """
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from backend.agent.constants import DEFAULT_RECURSION_LIMIT
 from backend.agent.edges import route_after_plan, route_after_react, route_after_router
-from backend.agent.llm import build_system_prompt
+from backend.agent.llm import _resolve_messages, build_system_prompt
 from backend.agent.nodes.router import RouterDecision
 from backend.agent.prompts import response_prompt
 from backend.agent.runtime import should_force_response
@@ -165,3 +166,25 @@ def test_response_prompt_forbids_named_self_computed_ratios():
     assert "current ratio" in response_prompt
     assert "do not tag it [SUPPORTED]" in response_prompt
     assert "This exception does not permit named financial ratios" in response_prompt
+
+
+def test_response_prompt_never_allows_internal_tool_citations():
+    assert "per get_" not in response_prompt
+    assert "run_dcf_valuation" not in response_prompt
+    assert "fall back to citing its tool name" not in response_prompt
+    assert "never the internal tool/function name" in response_prompt
+
+
+def test_response_node_receives_dialogue_without_tool_block():
+    human = HumanMessage(content="Analyze AAPL")
+    tool_call_message = AIMessage(
+        content="Need financials",
+        tool_calls=[{"name": "get_financials", "args": {"ticker": "AAPL"}, "id": "tc_1"}],
+    )
+    tool_message = ToolMessage(content='{"data": {}}', name="get_financials", tool_call_id="tc_1")
+    state = {
+        "dialogue": [human],
+        "messages": [tool_call_message, tool_message],
+    }
+
+    assert _resolve_messages(state, "response") == [human]

@@ -16,7 +16,7 @@ _NODE_MESSAGES: dict[str, str] = {
     "router":   "dialogue",
     "plan":     "dialogue",
     "react":    "last_human_and_tool_block",
-    "response": "dialogue_and_tool_block",
+    "response": "dialogue",
     "judge":    "last_human",
     "scrape":   "none",
 }
