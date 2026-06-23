@@ -120,6 +120,7 @@ def main():
         total_debt = (latest_bs.long_term_debt or 0.0) + (latest_bs.short_term_debt or 0.0),
         tax_rate=tax_rate,
         long_term_growth_rate=sector_data.long_term_growth_rate,
+        total_cash=latest_bs.cash
     )
 
     # 3. Load
@@ -236,7 +237,7 @@ def main():
     # ─────────────────────────────────────────────────────────────
 
     section("Raw EDGAR — FY2022 IS concepts")
-    fy2022_key = "2022-09-24"
+    fy2022_key = "2022-06-30"
     for concept, value in sorted(raw["income_statement"][fy2022_key].items()):
         print(f"  {concept:<60} {value:>20,.0f}")
 
