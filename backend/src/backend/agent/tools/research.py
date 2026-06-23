@@ -80,7 +80,8 @@ def get_financials(
         new_data = _normalize_financials_data(hf.model_dump(mode="json"))
         entry = upsert(
             research_messages, tool="get_financials", identifier=identifier,
-            ticker=t, cycle=cycle, data=new_data, merge=merge_financials_data,
+            ticker=t, cycle=cycle, data=new_data, data_source="SEC EDGAR",
+            merge=merge_financials_data,
         )
         log_cache_status("get_financials", False, ticker=t, span=span, fiscal_years=fiscal_years)
         return {"source": "external", "data": entry["data"]}
@@ -93,7 +94,8 @@ def get_financials(
     new_data = _normalize_financials_data(hf.model_dump(mode="json"))
     entry = upsert(
         research_messages, tool="get_financials", identifier=identifier,
-        ticker=t, cycle=cycle, data=new_data, merge=merge_financials_data,
+        ticker=t, cycle=cycle, data=new_data, data_source="SEC EDGAR",
+        merge=merge_financials_data,
     )
     log_cache_status("get_financials", False, ticker=t, span=span)
     return {"source": "external", "data": entry["data"]}
@@ -139,9 +141,10 @@ def get_market_data(
 
     md = financials_service.get_market_data(t, include_rfr)
     new_data = md.model_dump(mode="json")
+    data_source = "Yahoo Finance, FRED (10-Year Treasury)" if include_rfr else "Yahoo Finance"
     entry = upsert(
         research_messages, tool="get_market_data", identifier=identifier,
-        ticker=t, cycle=cycle, data=new_data,
+        ticker=t, cycle=cycle, data=new_data, data_source=data_source,
     )
     log_cache_status("get_market_data", False, ticker=t, include_rfr=include_rfr)
     return {"source": "external", "data": entry["data"]}
@@ -179,7 +182,7 @@ def get_sector_data(
     new_data = sd.model_dump(mode="json")
     entry = upsert(
         research_messages, tool="get_sector_data", identifier=identifier,
-        ticker=None, cycle=cycle, data=new_data,
+        ticker=None, cycle=cycle, data=new_data, data_source="Damodaran (NYU Stern)",
     )
     log_cache_status("get_sector_data", False, year=resolved)
     return {"source": "external", "data": entry["data"]}

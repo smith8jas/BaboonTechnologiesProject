@@ -13,8 +13,21 @@ logger = logging.getLogger(__name__)
 
 
 def _project(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop bookkeeping fields (tool, cycle, last_updated) the LLM doesn't need."""
-    return [{"ticker": e["ticker"], "identifier": e["identifier"], "data": e["data"]} for e in entries]
+    """Drop bookkeeping fields (tool, cycle, last_updated) the LLM doesn't need.
+
+    Keeps data_source so the LLM cites the real upstream provenance (e.g. "SEC
+    EDGAR") instead of inferring it from the internal tool name.
+    """
+    return [
+        {
+            "ticker": e["ticker"],
+            "identifier": e["identifier"],
+            "data": e["data"],
+            "data_source": e.get("data_source"),
+            "tool": e["tool"],
+        }
+        for e in entries
+    ]
 
 
 async def response_node(state: AgentState):
