@@ -62,7 +62,7 @@ def test_route_after_router_defaults_to_end():
 
 
 def test_route_after_plan_needs_tools():
-    assert route_after_plan({"plan_status": "needs_tools"}) == "tools"
+    assert route_after_plan({"plan_status": "needs_tools"}) == "exec_research"
 
 
 def test_route_after_plan_needs_scrape():
@@ -72,7 +72,7 @@ def test_route_after_plan_needs_scrape():
 def test_route_after_plan_scrape_and_tools_fans_out():
     result = route_after_plan({"plan_status": "needs_scrape_and_tools"})
     assert isinstance(result, list)
-    assert {send.node for send in result} == {"scrape_node", "tools"}
+    assert {send.node for send in result} == {"scrape_node", "exec_research"}
 
 
 def test_route_after_plan_ready():
@@ -85,7 +85,7 @@ def test_route_after_plan_defaults_to_response():
 
 def test_route_after_react_matches_plan_routing():
     for status, expected in [
-        ("needs_tools", "tools"),
+        ("needs_tools", "exec_research"),
         ("needs_scrape", "scrape_node"),
         ("ready_to_respond", "response_node"),
     ]:
@@ -152,8 +152,12 @@ def test_judge_receives_cached_data_catalog():
         },
     }
 
-    blocks = build_system_prompt(state, "judge instructions", node="judge")
-    runtime_context = blocks[1]["text"]
+    system_content = build_system_prompt(state, "judge instructions", node="judge")
+    # Judge's provider is non-Anthropic by default, so the system prompt is a
+    # plain string (block lists only go to providers that support them).
+    runtime_context = (
+        system_content if isinstance(system_content, str) else system_content[1]["text"]
+    )
 
     assert "cached_data_catalog" in runtime_context
     assert '"ticker": "TSLA"' in runtime_context

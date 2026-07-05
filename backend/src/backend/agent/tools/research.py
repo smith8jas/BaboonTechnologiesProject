@@ -1,12 +1,13 @@
 """Research-phase tools: pull external data (financials, market, sector, web)."""
 
+import asyncio
 from datetime import date
 from typing import Annotated
 
 from langchain_core.tools import InjectedToolArg, tool
 
 from backend.services import financials as financials_service
-from backend.services.scrape import search_and_scrape
+from backend.services.scrape import search_and_scrape_async
 
 from ..cache import find, merge_financials_data, upsert
 from .base import log_cache_status
@@ -210,12 +211,24 @@ def scrape_web(
         confidence    Scrape quality score (0–1). Treat results below 0.6 as low confidence —
                       mention the limitation when citing them.
     """
-    results = search_and_scrape(topic, int(max_results))
-    log_cache_status("scrape_web", False, topic=topic)
+    # Thin transition layer over the scrape service. Inside the agent graph this
+    # body never runs: routing sends scrape calls to scrape_node (LLM query
+    # expansion, concurrent multi-query scraping, scrape_history persistence)
+    # and the execution nodes filter them out. Direct invocation — scripts,
+    # tests, non-graph callers — gets the single-query service path, emitting
+    # the same result shape scrape_node writes.
+    results = asyncio.run(search_and_scrape_async(topic, max_results))
     return {
         "source": "web",
-        "data": [
-            {"url": r.url, "title": r.title, "snippet": r.snippet, "confidence": r.confidence}
+        "results": [
+            {
+                "query": topic,
+                "url": r.url,
+                "title": r.title,
+                "snippet": r.snippet,
+                "confidence": r.confidence,
+                "source_type": r.source_type,
+            }
             for r in results
         ],
     }

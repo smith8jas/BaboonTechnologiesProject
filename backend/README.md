@@ -111,11 +111,12 @@ Tools live in `agent/tools/research.py` (external fetches) and `agent/tools/calc
 
 ## DCF Engine
 
-`src/backend/services/dcf_engine.py` builds valuation assumptions from historical financials:
+Assumptions come from the forecast engine (`src/backend/services/forecast.py`); the DCF engine (`src/backend/services/dcf_engine.py`) values them:
 
-- `build_assumptions`: derives revenue growth, EBIT margin, tax rate, D&A %, capex %, NWC % from historical averages
+- `forecast.build_forecast_assumptions`: derives revenue growth, EBIT margin, tax rate, D&A %, capex %, NWC %, and terminal growth from recency-weighted, outlier-filtered history — clamped, size-capped, faded toward the terminal rate, with per-driver provenance
+- `scenarios.build_scenarios` / `scenarios.run_scenario_analysis` (`src/backend/services/scenarios.py`): bear/base/bull variants of those assumptions, each valued through the DCF engine
 - `build_valuation_inputs`: computes WACC from CAPM (beta × ERP + risk-free rate), terminal value, equity value
-- `run_dcf`: projects UFCF for 5 years, discounts to present, outputs intrinsic value per share
+- `run_dcf`: projects UFCF along the growth fade path, discounts to present, outputs intrinsic value per share plus assumption provenance
 
 ## API Endpoints
 

@@ -16,6 +16,7 @@ from .calculation import (
     get_profitability_ratios,
     get_solvency_ratios,
     run_dcf_valuation,
+    run_scenario_analysis,
 )
 from .research import get_financials, get_market_data, get_sector_data, scrape_web
 
@@ -32,6 +33,7 @@ TOOL_SPECS = [
     ToolSpec(tool=run_dcf_valuation,                group="dcf",                 route="dcf",          phase=PHASE_CALCULATION),
     ToolSpec(tool=scrape_web,                       group="web_scrape",          route="scrape",       phase=PHASE_RESEARCH),
     ToolSpec(tool=get_comps_valuation,              group="comparables",         route="comparables",  phase=PHASE_CALCULATION),
+    ToolSpec(tool=run_scenario_analysis,            group="scenario",            route="scenarios",    phase=PHASE_CALCULATION),
 ]
 
 tools = [apply_tool_spec(spec) for spec in TOOL_SPECS]

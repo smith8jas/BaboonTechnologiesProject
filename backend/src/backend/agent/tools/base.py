@@ -9,7 +9,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 PHASE_RESEARCH = "research"
+PHASE_ASSUMPTIONS = "assumptions"
 PHASE_CALCULATION = "calculation"
+
+# Execution order across the tool-execution nodes: research (external I/O)
+# runs in exec_research; assumptions then calculation (pure computation over
+# gathered data) run in exec_calc. Later phases always see earlier phases'
+# writes — within a node via local copies, across nodes via the state.
+PHASE_ORDER: tuple[str, ...] = (PHASE_RESEARCH, PHASE_ASSUMPTIONS, PHASE_CALCULATION)
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,256 @@
+================================================================================
+BABOON TECHNOLOGIES — IMPLEMENTATION PLAN
+Durable state, context hygiene, provider rate limiting, shared fetch cache
+Written: 2026-07-05
+================================================================================
+
+WHY THIS PLAN
+--------------------------------------------------------------------------------
+Two production problems exist today, and two more arrive with the roadmap
+(vector-DB RAG, international data APIs, agent-based modeling):
+
+  P1. The agent graph compiles with MemorySaver (backend/src/backend/agent/
+      graph.py). Every Render deploy/restart wipes all conversation state:
+      users keep their chat transcript (Supabase) but the agent loses its
+      research cache and thread continuity mid-conversation.
+
+  P2. Within a thread, three state channels grow without bound:
+      - dialogue (operator.add): every human turn + every final answer
+        (long analyst reports) is replayed into router/plan/response prompts.
+      - scrape_history (operator.add): never purged, included in react context.
+      - tool_insights (operator.add): never purged, used by response node.
+      Today, restarts accidentally garbage-collect these. Fixing P1 removes
+      that accident, so P1 and P2 MUST ship together.
+
+  P3. No throttling anywhere. exec_research runs all research tool calls
+      concurrently; scrape_node fans one topic into N queries x M page
+      fetches. SEC EDGAR enforces 10 req/s per IP (403 + ~10 min escalating
+      IP blocks — Render IP may be shared, so one block hits all users).
+      Yahoo (yfinance) and DuckDuckGo (ddgs) have no published limits but
+      block opaquely on bursts.
+
+  P4. The data cache is conversation-scoped (research_messages). Every new
+      conversation refetches EDGAR/Yahoo/FRED/Damodaran for the same ticker.
+      Wasteful now; untenable once metered international APIs are added.
+
+Ordering rationale: Phase 1+2 are one atomic unit (durability without hygiene
+makes context growth worse). Phase 3+4 live entirely in the adapters layer and
+prepare it for the planned international-API and robustness work. Phases are
+independent of the RAG/ABM roadmap and should land before it.
+
+
+PHASE 1 — CONTEXT HYGIENE (within-thread growth control)
+--------------------------------------------------------------------------------
+Goal: bound what each LLM node can ever receive, regardless of thread length.
+
+1.1 Purge scrape_history and tool_insights by cycle
+    - state.py: scrape_history / tool_insights entries already carry (or can
+      carry) a "cycle" field; ensure every writer stamps it
+      (scrape_node writes scrape_history; react node writes tool_insights).
+    - cache/catalog.py: extend purge() — or add purge_transient() — with
+      retention constants, mirroring FETCHED_KEEP/CALCULATED_KEEP:
+          SCRAPE_KEEP   = 3   # cycles
+          INSIGHTS_KEEP = 2   # cycles
+    - nodes/router.py: the existing every-5th-turn purge hook is the call
+      site; router must return the trimmed lists as state delta. NOTE:
+      operator.add channels cannot be shrunk by returning a smaller list —
+      returning a list APPENDS. Two options, pick one during implementation:
+        (a) change scrape_history/tool_insights to plain overwrite channels
+            (like research_messages) — writers then do local-copy + append +
+            return full list. Preferred: consistent with the data caches.
+        (b) keep operator.add and use a RemoveMessage-style reducer. More
+            LangGraph machinery, not worth it here.
+    - Tests: tests/unit/agent/cache/ — purge drops old-cycle scrape/insight
+      entries, keeps recent; writers stamp cycle correctly.
+
+1.2 Rolling dialogue summary
+    - New: agent/nodes/... (fold into router or a small helper in messages.py).
+      Policy: keep the last N_TURNS_VERBATIM = 6 dialogue messages verbatim;
+      when len(dialogue) exceeds threshold (e.g. 14 messages), summarize the
+      overflow once into a single SystemMessage-like summary entry pinned at
+      the front ("Conversation so far: ..."), produced by one LLM call at the
+      turn boundary (router is the natural place: it already runs first and
+      already owns the purge cadence).
+    - dialogue must become an overwrite channel for this (same change as 1.1a)
+      OR store the summary in a new state field (dialogue_summary: str) and
+      have _resolve_messages compose [summary] + last N verbatim. The second
+      option avoids touching the reducer — PREFERRED:
+        * state.py: add dialogue_summary: NotRequired[str]
+        * llm.py _resolve_messages: for "dialogue" strategy return
+          summary-prefixed window instead of full list.
+        * router (every-5th-turn hook): refresh dialogue_summary when the
+          verbatim window has rolled past unsummarized turns.
+      With this option dialogue itself still grows in state (harmless bytes in
+      Postgres) but never fully enters a prompt again.
+    - Tests: _resolve_messages returns window+summary; summary refresh
+      triggers at the right length; response node still sees latest turn.
+
+1.3 Response payload guard (small)
+    - nodes/response.py reads research_messages/calculated_messages payloads
+      in full. After purge this is bounded by the retention windows, but add
+      a hard character budget (e.g. serialize entries newest-first, stop at
+      ~60k chars, note truncation) so one giant scrape/financials payload
+      can never blow the context. Log when the guard trips.
+
+Exit criteria Phase 1: a scripted 30-turn conversation (replayed fixtures, no
+network) shows flat prompt sizes for router/plan/react after turn ~8, and
+scrape_history/tool_insights lengths plateau.
+
+
+PHASE 2 — DURABLE CHECKPOINTER (ship immediately after/with Phase 1)
+--------------------------------------------------------------------------------
+Goal: agent state survives deploys; threads resume exactly.
+
+2.1 Postgres checkpointer via existing Supabase
+    - Add dependency: langgraph-checkpoint-postgres (uv add).
+    - core/config.py: add DATABASE_URL (Supabase Postgres connection string;
+      use the session pooler URI for Render). .env.example entry.
+    - graph.py initialize_agent(): accept a checkpointer parameter,
+      default MemorySaver (tests/CLI unchanged). Async entrypoints use
+      AsyncPostgresSaver; call .setup() once at app startup.
+    - main.py / runtime.py: build the saver at startup (FastAPI lifespan),
+      pass into initialize_agent, close pool on shutdown.
+    - Serialization check: research/calculated entries hold plain dicts —
+      already checkpointer-safe (store.py find() already tolerates the
+      tuple->list identifier round-trip; Postgres saver uses JSONB, same
+      property). Verify AssumptionProvenance/ForecastAssumptions payloads are
+      plain JSON (they are — stored via model_dump).
+
+2.2 Retention at the store level
+    - Old threads accumulate in Postgres forever. Add a small janitor:
+      scheduled delete of checkpoints for threads with no activity in
+      RETENTION_DAYS = 30 (SQL against the checkpoints table, run daily —
+      Render cron or FastAPI startup task). Chat transcripts in Supabase are
+      unaffected.
+
+2.3 Fallback behavior
+    - If DATABASE_URL is unset or the DB is unreachable at startup: log
+      loudly and fall back to MemorySaver rather than refusing to boot
+      (matches the app's never-crash philosophy). Health endpoint should
+      report which mode is active.
+
+Exit criteria Phase 2: start server, hold a conversation that caches AAPL
+financials, kill and restart the server, ask a follow-up in the same thread —
+agent answers from cached state without refetching, and without the user
+noticing. MemorySaver path still green in tests.
+
+
+PHASE 3 — PER-PROVIDER RATE LIMITING (adapters layer)
+--------------------------------------------------------------------------------
+Goal: the app can never violate EDGAR's 10 req/s, and burst-sensitive
+unofficial sources (Yahoo, DDG) are smoothed. Tools stay ignorant of it.
+
+3.1 Limiter primitive
+    - Add dependency: aiolimiter (async token bucket), plus a tiny sync
+      wrapper for the sync adapter paths (threading.Semaphore + interval, or
+      run sync fetches through asyncio.to_thread and share the async limiter).
+    - New: adapters/throttle.py
+        LIMITS = {
+          "edgar":     8 req/s   (headroom under the published 10/s),
+          "yahoo":     ~1 req/s  (unofficial; conservative),
+          "fred":      2 req/s   (well under 120/min),
+          "damodaran": 1 req/s,
+          "ddg":       1 concurrent search at a time,
+          "scrape_fetch": 4 concurrent page fetches,
+        }
+      One module-level limiter per provider; expose acquire(provider).
+
+3.2 Wire into adapters
+    - adapters/edgar.py, yahoo_finance.py, fred.py, damodaran.py: wrap the
+      actual HTTP-touching functions. Every path a tool can take goes through
+      these modules already — verify no adapter bypass exists (grep for
+      direct httpx/requests use in services/; services/scrape.py is the only
+      one, handled next).
+    - services/scrape.py: DDG search behind the ddg limiter; page fetches
+      behind scrape_fetch semaphore (replace unbounded asyncio.gather over
+      _fetch_and_parse with a bounded gather).
+    - Confirm edgartools identity/User-Agent is set from config (EDGAR
+      requirement: UA with contact email) — set_identity at startup if not
+      already done.
+
+3.3 Backoff on block signals
+    - On 403 (EDGAR) / 429 (Yahoo, FRED): single retry after provider-
+      specific cooldown, then raise the adapter's normal error so the tool
+      degrades gracefully (agent already tolerates missing data). Never
+      retry-loop against a block — that extends EDGAR bans.
+
+Exit criteria Phase 3: a synthetic burst test (asyncio.gather of 30 fake
+adapter calls with a mocked transport) shows dispatch times spread according
+to the limits; comps request with 4 peers stays under 8 EDGAR req/s.
+
+PHASE 4 — SHARED FETCH CACHE (adapters layer, below the tools)
+--------------------------------------------------------------------------------
+Goal: identical external fetches are served from local storage across
+conversations and across restarts. NOT visible to the LLM: tools return the
+same single payload as today; only the byte source changes. Conversation
+isolation is preserved by construction — the cache stores provider data,
+never conversation content.
+
+4.1 Storage
+    - SQLite via stdlib (no new service to run; DuckDB also fine if preferred
+      for later analytics — decide at implementation; schema identical):
+        fetch_cache(source TEXT, key TEXT, fetched_at TEXT, payload JSON,
+                    PRIMARY KEY (source, key))
+    - Location: backend/data/fetch_cache.db (gitignored); path in config.
+      NOTE Render's disk is ephemeral — acceptable: the cache is a
+      performance layer, not a source of truth; it warms up again. (If/when
+      persistent disk or Supabase-table storage is wanted, swap the backend —
+      keep the interface narrow.)
+
+4.2 TTL policy per source
+        edgar financial statements : 24 h   (filings change rarely; new 10-K
+                                             invalidates by key anyway)
+        yahoo market data          : 15 min (price/beta staleness tolerance)
+        fred risk-free rate        : 12 h
+        damodaran sector tables    : 30 d
+        ddg/scrape                 : NOT cached here (freshness is the point;
+                                     revisit only if DDG blocking becomes
+                                     chronic)
+
+4.3 Wire as read-through in the adapters
+    - Same wrapping points as Phase 3 (throttle outside, cache check inside:
+      only cache misses consume rate budget).
+    - Key design: source + normalized request key (e.g. edgar: CIK+span;
+      yahoo: ticker+fields; damodaran: industry+table).
+    - Invalidation: TTL only. No manual invalidation paths in v1.
+    - Config flag CACHE_DISABLED for tests/debugging.
+
+4.4 Tests
+    - Read-through hit/miss/expiry with a mocked clock; concurrent misses for
+      the same key fetch once (single-flight lock, mirroring the pattern in
+      agent/cache/store.py); corrupted row falls back to refetch.
+
+Exit criteria Phase 4: two back-to-back conversations about the same ticker —
+second one performs zero EDGAR/Yahoo requests (assert via mocked transport
+call counts); cold-start latency for a repeat ticker drops accordingly.
+
+
+SEQUENCING, RISK, VERIFICATION
+--------------------------------------------------------------------------------
+Order:      Phase 1 -> 2 (atomic pair), then 3 -> 4 (one adapters PR each).
+            Estimated size: P1 ~medium, P2 ~small, P3 ~small, P4 ~medium.
+
+Risks:
+  - Reducer changes (1.1/1.2): touching operator.add channels is the most
+    delicate edit in the plan — prefer the dialogue_summary state-field
+    option specifically to avoid changing the dialogue reducer.
+  - Postgres saver on Render free tier: watch connection limits; use the
+    Supabase session pooler URI and a small pool (2-4 conns).
+  - Summarization quality: the dialogue summary is itself an LLM output —
+    keep it factual/short via a dedicated prompt; never summarize the
+    CURRENT turn.
+  - Cache staleness complaints: 15-min market data is a product decision;
+    surface fetched_at in data_source strings so the response node can cite
+    data age (store.py already has last_updated plumbing).
+
+Global verification after each phase:
+  - uv run pytest tests/unit -q                       (full suite green)
+  - Graph compile + registry audit script             (from 2026-07-05 audit)
+  - Live smoke: one streamed chat via /agent/chat/stream on a dev server.
+
+Explicitly OUT OF SCOPE for this plan (tracked separately on the roadmap):
+  vector-DB RAG for 10-K qualitative data; international data providers;
+  adapter provider-abstraction refactor; scrape confidence via embeddings;
+  agent-based modeling; eval harness; point-in-time backtesting. This plan
+  is the infrastructure floor those items stand on.
+================================================================================

@@ -12,6 +12,8 @@ GROUP_LABELS: dict[str, str] = {
     "growth_rate": "Calculating growth rates...",
     "ratio": "Calculating ratios...",
     "dcf": "Running DCF valuation...",
+    "scenario": "Running scenario analysis...",
+    "comparables": "Running comparables valuation...",
     "web_scrape": "Searching the web...",
 }
 
@@ -22,6 +24,8 @@ _GROUP_PRIORITY: list[str] = [
     "growth_rate",
     "ratio",
     "dcf",
+    "scenario",
+    "comparables",
     "web_scrape",
 ]
 
@@ -69,7 +73,7 @@ def events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
         elif plan_status == "ready_to_respond":
             events.append({"type": "thought", "content": "Sufficient data gathered — composing response"})
 
-    elif node_name == "tools":
+    elif node_name in ("tools", "exec_research", "exec_calc"):
         tool_names: list[str] = []
         for msg in messages:
             name = getattr(msg, "name", None) or ""
@@ -79,6 +83,14 @@ def events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
             events.extend(_status_events_from_tool_names(tool_names))
 
     elif node_name == "react_node":
+        # Per-tool interpretations written by react — live reasoning for the frontend.
+        for entry in state_update.get("tool_insights", []) or []:
+            events.append({
+                "type": "insight",
+                "content": entry.get("insight", ""),
+                "group": entry.get("group"),
+                "tool_name": entry.get("tool_name"),
+            })
         plan_status = state_update.get("plan_status", "")
         if plan_status == "needs_tools":
             for msg in messages:

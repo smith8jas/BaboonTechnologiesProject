@@ -8,12 +8,27 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from .edges import route_after_judge, route_after_plan, route_after_react, route_after_router
-from .nodes import plan_node, react_node, response_node, router, scrape_node, tools_node, judge_node
+from .nodes import (
+    exec_calc_node,
+    exec_research_node,
+    judge_node,
+    plan_node,
+    react_node,
+    response_node,
+    router,
+    scrape_node,
+)
 from .state import AgentState
 
 
 def initialize_agent():
-    """Build and compile the state graph used by API and CLI entrypoints."""
+    """Build and compile the state graph used by API and CLI entrypoints.
+
+    Tool execution topology: plan/react dispatch scrape_node and exec_research
+    in parallel (both exactly one hop), converging on exec_calc — so
+    assumptions/calculation tools see this same cycle's scrape and research
+    writes before react runs, and exec_calc fires exactly once per cycle.
+    """
 
     #Setting the state class in the agent
     agent_builder = StateGraph(AgentState)
@@ -21,7 +36,8 @@ def initialize_agent():
     #Creating the graph nodes
     agent_builder.add_node("router", router)
     agent_builder.add_node("plan_node", plan_node)
-    agent_builder.add_node("tools", tools_node)
+    agent_builder.add_node("exec_research", exec_research_node)
+    agent_builder.add_node("exec_calc", exec_calc_node)
     agent_builder.add_node("scrape_node", scrape_node)
     agent_builder.add_node("react_node", react_node)
     agent_builder.add_node("response_node", response_node)
@@ -31,14 +47,16 @@ def initialize_agent():
     agent_builder.add_edge(START, "router")
     agent_builder.add_conditional_edges("router", route_after_router, {"plan_node": "plan_node", "end": END})
     agent_builder.add_conditional_edges("plan_node", route_after_plan,
-        {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
+        {"exec_research": "exec_research", "scrape_node": "scrape_node", "response_node": "response_node"},
     )
-    agent_builder.add_edge("tools", "react_node")
-    agent_builder.add_edge("scrape_node", "react_node")
+    #Both one-hop branches converge on exec_calc, which always runs once per cycle
+    agent_builder.add_edge("exec_research", "exec_calc")
+    agent_builder.add_edge("scrape_node", "exec_calc")
+    agent_builder.add_edge("exec_calc", "react_node")
     agent_builder.add_conditional_edges(
         "react_node",
         route_after_react,
-        {"tools": "tools", "scrape_node": "scrape_node", "response_node": "response_node"},
+        {"exec_research": "exec_research", "scrape_node": "scrape_node", "response_node": "response_node"},
     )
     agent_builder.add_edge("response_node", "judge_node")
     agent_builder.add_conditional_edges(

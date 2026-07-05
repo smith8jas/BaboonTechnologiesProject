@@ -69,7 +69,7 @@ async def search_and_scrape_async(
     avoid_lower = [a.lower() for a in [*_DEFAULT_AVOID_PATTERNS, *(avoid or [])]]
     preferred_lower = [p.lower() for p in (preferred_source_types or [])]
 
-    print(f"[SCRAPE] search_and_scrape_async: {query!r}  max_results={max_results}")
+    logger.debug("search_and_scrape_async: %r max_results=%d", query, max_results)
     fetch_count = max_results + len(avoid_lower) + 2
     try:
         # DDGS is synchronous — run in a thread to avoid blocking the event loop
@@ -78,10 +78,9 @@ async def search_and_scrape_async(
         )
     except Exception as exc:
         logger.warning("DuckDuckGo search failed for %r: %s", query, exc)
-        print(f"[SCRAPE] DuckDuckGo FAILED: {exc}")
         return []
 
-    print(f"[SCRAPE] DuckDuckGo returned {len(raw_hits)} raw hit(s)")
+    logger.debug("DuckDuckGo returned %d raw hit(s)", len(raw_hits))
 
     if avoid_lower:
         raw_hits = [
@@ -121,16 +120,10 @@ async def search_and_scrape_async(
         r.source_type = _infer_source_type(r.url)
         if preferred_lower and any(p in r.source_type.lower() for p in preferred_lower):
             r.confidence = min(1.0, round(r.confidence + 0.1, 3))
-            print(f"[SCRAPE]   preferred source bonus applied → {r.confidence}  ({r.source_type})")
         results.append(r)
 
-    print(f"[SCRAPE] {len(results)} result(s) above confidence threshold {_MIN_CONFIDENCE}")
+    logger.debug("%d result(s) above confidence threshold %s", len(results), _MIN_CONFIDENCE)
     return sorted(results, key=lambda r: r.confidence, reverse=True)
-
-
-def search_and_scrape(query: str, max_results: int = 3) -> list[ScrapeResult]:
-    """Synchronous wrapper kept for backwards compatibility."""
-    return asyncio.run(search_and_scrape_async(query, max_results))
 
 
 async def _fetch_and_parse(
@@ -142,7 +135,6 @@ async def _fetch_and_parse(
     fallback_snippet: str,
 ) -> ScrapeResult | None:
     """Fetch one search result and reduce the page to a scored text snippet."""
-    print(f"[SCRAPE] Fetching: {url[:80]}")
     try:
         response = await client.get(url)
         response.raise_for_status()
@@ -157,21 +149,17 @@ async def _fetch_and_parse(
         text = " ".join(text.split())
 
         if not text:
-            print(f"[SCRAPE]   No body text found, using DDG snippet fallback")
             text = fallback_snippet
-        else:
-            print(f"[SCRAPE]   Scraped {len(text)} chars of body text")
 
     except Exception as exc:
         logger.debug("Failed to fetch %s: %s", url, exc)
-        print(f"[SCRAPE]   Fetch failed ({exc.__class__.__name__}): {exc}")
         if not fallback_snippet:
             return None
         text = fallback_snippet
 
     snippet = text[:_SNIPPET_LENGTH]
     confidence = _confidence(text, query, research_goal)
-    print(f"[SCRAPE]   confidence={confidence:.3f}  title={title[:50]!r}")
+    logger.debug("scraped %s confidence=%.3f", url[:80], confidence)
     return ScrapeResult(url=url, title=title, snippet=snippet, confidence=confidence)
 
 

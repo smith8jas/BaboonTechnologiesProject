@@ -6,6 +6,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
+from backend.core.llm import message_text
+
 from ..llm import invoke_llm
 from ..prompts import deep_response_prompt, judge_response_addendum, response_prompt
 from ..state import AgentState
@@ -147,9 +149,7 @@ async def response_node(state: AgentState):
         )
     
     #Returns response and stores it as current_response for judge/react to reference
-    content = response_message.content
-    if isinstance(content, list):
-        content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+    content = message_text(response_message)
     result = {}
     if content:
         result["current_response"] = content

@@ -279,6 +279,57 @@ class Assumptions(BaseModel):
     nwc_over_revenue:                               float
 
 
+class AssumptionProvenance(BaseModel):
+    """One forecast driver plus the audit trail of how it was derived."""
+
+    value: float
+    method: str                             # e.g. "weighted_history", "size_capped_fade", "override", "default"
+    inputs_used: list[str] = []             # data that fed the estimate (e.g. "financials:5y", "market_data:market_cap")
+    missing_inputs: list[str] = []          # inputs that would have improved the estimate
+    rationale: str = ""                     # short human-readable derivation note
+    confidence: str = "medium"              # "high" | "medium" | "low"
+
+
+class ForecastAssumptions(BaseModel):
+    """Context-aware projection drivers with per-assumption provenance.
+
+    Producer-agnostic artifact: today built by the deterministic forecast
+    engine (weighted history + sector/size context); future producers (e.g.
+    agent-based simulations) emit the same shape. Consumed by the DCF and any
+    projection-based analysis (sensitivity, forward comps, credit projections).
+    """
+
+    ticker: str
+    scenario: str = "default"
+    span_years: int
+    projection_years: int = 5
+
+    revenue_growth: AssumptionProvenance
+    # Per-projected-year growth (fade from initial growth toward terminal);
+    # single-rate consumers can use revenue_growth.value instead.
+    revenue_growth_path: list[float]
+    ebit_margin: AssumptionProvenance
+    tax_rate: AssumptionProvenance
+    da_over_revenue: AssumptionProvenance
+    capex_over_revenue: AssumptionProvenance
+    nwc_over_revenue: AssumptionProvenance
+    terminal_growth: AssumptionProvenance
+
+    quality_flags: list[str] = []           # e.g. "short_history", "outliers_excluded:ebit_margin"
+    missing_inputs: list[str] = []          # aggregated across assumptions, deduped
+
+    def to_assumptions(self) -> Assumptions:
+        """Flatten to the plain-values model the DCF engine consumes."""
+        return Assumptions(
+            revenue_growth=self.revenue_growth.value,
+            ebit_margin=self.ebit_margin.value,
+            tax_rate=self.tax_rate.value,
+            depreciation_and_amortization_over_revenue=self.da_over_revenue.value,
+            capex_over_revenue=self.capex_over_revenue.value,
+            nwc_over_revenue=self.nwc_over_revenue.value,
+        )
+
+
 class DCFOutput(BaseModel):
     ticker:                         str
     fiscal_year:                    str
@@ -313,10 +364,20 @@ class DCFOutput(BaseModel):
 
     # Projection assumptions: each is a single flat rate averaged across
     # assumption_span_years of historical periods, then applied identically to
-    # every projected year — never the latest single-year actual.
+    # every projected year — never the latest single-year actual. When a
+    # forecast artifact drove the run, revenue follows projected_growth_path
+    # (fade) instead of the flat assumption_revenue_growth.
     assumption_span_years:           int | None = None
     assumption_revenue_growth:       float | None = None
     assumption_ebit_margin:          float | None = None
     assumption_da_over_revenue:      float | None = None
     assumption_capex_over_revenue:   float | None = None
     assumption_nwc_over_revenue:     float | None = None
+
+    # ── Assumption transparency (populated when a ForecastAssumptions
+    # artifact drove the run) ──
+    projected_growth_path:           list[float] | None = None  # per-year revenue growth actually applied
+    terminal_growth_clamped:         bool = False               # g was clamped below WACC to keep TV finite
+    assumption_provenance:           dict | None = None         # per-driver method/inputs/rationale/confidence
+    assumption_quality_flags:        list[str] = []
+    assumption_missing_inputs:       list[str] = []             # inputs that would improve the assumptions

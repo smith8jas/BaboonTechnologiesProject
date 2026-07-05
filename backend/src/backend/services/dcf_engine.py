@@ -1,75 +1,28 @@
-"""DCF assumption, projection, and valuation calculations."""
+"""DCF projection and valuation calculations.
+
+Assumptions are produced by the forecast engine (services.forecast) — flatten
+a ForecastAssumptions artifact via to_assumptions() and pass it (plus the
+artifact itself as `forecast=`) into run_dcf.
+"""
 
 from backend.processing.schema import (
     HistoricalFinancials,
     MarketData,
     SectorData,
     Assumptions,
+    ForecastAssumptions,
     ValuationInputs,
     DCFOutput
 )
 
+# When a forecast artifact supplies terminal growth, keep g at least this far
+# below WACC so the Gordon Growth terminal value stays finite and positive.
+TERMINAL_WACC_BUFFER = 0.005
 
-def _avg(values: list) -> float | None:
-    """Average the non-null values in a list, returning None for empty input."""
-    clean = [v for v in values if v is not None]
-    return sum(clean) / len(clean) if clean else None
-
-
-def build_assumptions(
-    hf: HistoricalFinancials,
-    md: MarketData | None = None,
-    sd: SectorData | None = None,
-) -> Assumptions:
-    """Derive baseline DCF assumptions from the historical financial series."""
-    periods = hf.periods
-    rev = [p.income_statement.revenue for p in periods]
-
-    revenue_growth = _avg([
-        (rev[i] - rev[i-1]) / abs(rev[i-1])
-        for i in range(1, len(rev))
-        if rev[i] is not None and rev[i-1]
-    ])
-
-    ebit_margin = _avg([
-        p.income_statement.ebit / p.income_statement.revenue
-        for p in periods
-        if p.income_statement.ebit and p.income_statement.revenue
-    ])
-
-    tax_rate = _avg([
-        p.income_statement.tax_expense / p.income_statement.ebit
-        for p in periods
-        if p.income_statement.tax_expense and p.income_statement.ebit
-    ])
-
-    da_pct = _avg([
-        p.cash_flow.depreciation_amortization / p.income_statement.revenue
-        for p in periods
-        if p.cash_flow.depreciation_amortization and p.income_statement.revenue
-    ])
-
-    capex_pct = _avg([
-        p.cash_flow.capex / p.income_statement.revenue
-        for p in periods
-        if p.cash_flow.capex and p.income_statement.revenue
-    ])
-
-    nwc_pct = _avg([
-        p.balance_sheet.net_working_capital / p.income_statement.revenue
-        for p in periods
-        if p.balance_sheet.net_working_capital is not None and p.income_statement.revenue
-    ])
-
-    derived = {
-        "revenue_growth":                               revenue_growth or 0.0,
-        "ebit_margin":                                  ebit_margin    or 0.0,
-        "tax_rate":                                     min(max(tax_rate or 0.21, 0.0), 0.6),
-        "depreciation_and_amortization_over_revenue":   da_pct or 0.0,
-        "capex_over_revenue":                           capex_pct      or 0.0,
-        "nwc_over_revenue":                             nwc_pct        or 0.0,
-    }
-    return Assumptions(**derived)
+_FORECAST_DRIVERS = (
+    "revenue_growth", "ebit_margin", "tax_rate", "da_over_revenue",
+    "capex_over_revenue", "nwc_over_revenue", "terminal_growth",
+)
 
 
 def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorData, a: Assumptions) -> ValuationInputs:
@@ -136,6 +89,16 @@ def build_valuation_inputs(hf: HistoricalFinancials, md: MarketData, sd: SectorD
 def project_revenue(base: float, growth: float, years: int) -> list[float]:
     """Compound revenue forward from base year."""
     return [base * (1 + growth) ** y for y in range(1, years + 1)]
+
+
+def project_revenue_path(base: float, growth_path: list[float]) -> list[float]:
+    """Compound revenue along a per-year growth path (e.g. a fade), not a flat rate."""
+    revenue = []
+    level = base
+    for g in growth_path:
+        level *= 1 + g
+        revenue.append(level)
+    return revenue
 
 
 def project_income_statement(
@@ -205,26 +168,43 @@ def run_dcf(
     hf: HistoricalFinancials,
     inputs: ValuationInputs,
     assumptions: Assumptions,
+    forecast: ForecastAssumptions | None = None,
 ) -> DCFOutput:
     """
     Full DCF valuation pipeline.
- 
+
     Flow:
         project revenue → IS → D&A/CapEx → ΔNWC → UFCF
         → discount at WACC
         → Gordon Growth terminal value
         → bridge to equity
         → intrinsic value per share
+
+    When a `forecast` artifact is given it drives the projection: revenue
+    follows its per-year growth fade path instead of the flat rate, terminal
+    growth comes from the artifact (clamped below WACC to keep TV finite),
+    and the assumption-transparency fields of DCFOutput are populated from
+    its provenance.
     """
     base_period = hf.periods[-1]
     base_rev    = base_period.income_statement.revenue
-    years       = inputs.projection_years
     wacc        = inputs.wacc
-    g           = inputs.long_term_growth_rate
     span_years  = len(hf.periods)
- 
+
+    terminal_growth_clamped = False
+    if forecast is not None:
+        years = len(forecast.revenue_growth_path)
+        g_target = forecast.terminal_growth.value
+        g = min(g_target, wacc - TERMINAL_WACC_BUFFER)
+        terminal_growth_clamped = g != g_target
+        span_years = forecast.span_years
+        revenue = project_revenue_path(base_rev, forecast.revenue_growth_path)
+    else:
+        years = inputs.projection_years
+        g = inputs.long_term_growth_rate
+        revenue = project_revenue(base_rev, assumptions.revenue_growth, years)
+
     # 1. Project
-    revenue   = project_revenue(base_rev, assumptions.revenue_growth, years)
     is_proj   = project_income_statement(revenue, assumptions.ebit_margin, assumptions.tax_rate)
     da_capex  = project_da_capex(
                     revenue,
@@ -291,4 +271,13 @@ def run_dcf(
             assumption_da_over_revenue=assumptions.depreciation_and_amortization_over_revenue,
             assumption_capex_over_revenue=assumptions.capex_over_revenue,
             assumption_nwc_over_revenue=assumptions.nwc_over_revenue,
+            # ── Assumption transparency (forecast-driven runs only) ──
+            projected_growth_path=(list(forecast.revenue_growth_path) if forecast else None),
+            terminal_growth_clamped=terminal_growth_clamped,
+            assumption_provenance=(
+                {name: getattr(forecast, name).model_dump() for name in _FORECAST_DRIVERS}
+                if forecast else None
+            ),
+            assumption_quality_flags=(list(forecast.quality_flags) if forecast else []),
+            assumption_missing_inputs=(list(forecast.missing_inputs) if forecast else []),
         )

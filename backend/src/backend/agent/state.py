@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     research_messages: NotRequired[list[dict[str, Any]]] #Research-tool results (financials, market data, sector data, damodaran), deduped by identifier
     calculated_messages: NotRequired[list[dict[str, Any]]] #Calculation-tool results (ratios, growth, dcf, comparables), deduped by identifier
     scrape_history: NotRequired[Annotated[list[dict[str, Any]], operator.add]] #History of scraped content during conversation
+    tool_insights: NotRequired[Annotated[list[dict[str, Any]], operator.add]] #Short react-written interpretations of tool results ({tool_name, group, insight, cycle}); context for response node and streamed to frontend
     tool_guidance: NotRequired[str] #Justification for tool use written by plan node and then red by response node
     deep_plan: NotRequired[bool] #Whether the router selected the deep-analysis path for the current request; persists across turns so the next router reads it as previous_depth
     judge_rationale: NotRequired[str] #Critique written by judge_node explaining why it chose its verdict

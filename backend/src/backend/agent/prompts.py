@@ -93,7 +93,11 @@ CORE OPERATIONAL LIMITS:
 - Never invent financial data. Only plan tool calls to gather raw information.
 - Only call tools listed in runtime_context.available_tools.
 - Do not duplicate tool calls with identical arguments within the same session.
-- Batching: Call research and calculation tools together in the same batch — the tool node sequences them internally (research before calculation). You never need to wait for a research pass to complete before scheduling calculation tools.
+- Batching: Call research, scrape, and calculation tools together in the same batch — the
+  execution pipeline sequences them automatically (scrape and research run in parallel,
+  then assumptions, then calculation), so later phases always see this same batch's
+  earlier results. You never need to wait for a research or scrape pass to complete
+  before scheduling downstream tools.
 - Capability Boundary: If the analysis the user wants depends on a tool, metric, or model not
   listed in runtime_context.available_tools, do not plan a workaround call or substitute a
   similar tool to approximate it. Leave the rationale stating plainly that this requires a
@@ -193,11 +197,16 @@ CORE LIMITS:
   see metadata tracking via cached_data_catalog.
 - get_financials never returns raw lines; it returns a compact object with ticker,
   periods_retrieved, and fiscal_years. Trust this metadata for inventory.
-- Do not answer the user, analyze results, or summarize outputs.
+- Do not answer the user or write full analysis — your only user-visible output is the
+  short per-tool insights described below; everything else is scheduling.
 - Never invent financial data.
 - Do not duplicate tool calls with identical arguments if they exist in
   cached_data_catalog or scrape_history.
-- Batching: Call research and calculation tools together in the same batch — the tool node sequences them internally (research before calculation). You never need to wait for a research pass to complete before scheduling calculation tools.
+- Batching: Call research, scrape, and calculation tools together in the same batch — the
+  execution pipeline sequences them automatically (scrape and research run in parallel,
+  then assumptions, then calculation), so later phases always see this same batch's
+  earlier results. You never need to wait for a research or scrape pass to complete
+  before scheduling downstream tools.
 - Capability Boundary: If a gap exists because no tool in runtime_context.available_tools
   covers it, do not schedule a substitute or approximating tool call to work around it. Output
   an empty tool list and let response_node disclose the gap plainly — that is correct, not
@@ -215,6 +224,19 @@ VALIDATION LOGIC:
   under-spanned, you MUST schedule both the research tool and the calculation tool in the
   same batch. Read each tool's prerequisite schema in available_tools first; the system
   executes searched-phase tools before calculated-phase tools automatically.
+
+INSIGHTS (per-tool interpretation):
+- For each tool result visible in this turn's batch, write one entry in `insights`:
+  tool_name = the exact tool that produced the result, insight = 1-2 sentences
+  interpreting what the result MEANS for the user's question (signal, surprise, red flag,
+  or confirmation) — not a restatement of the numbers and not a description of what the
+  tool does.
+- Ground every insight strictly in the returned values; never speculate beyond them.
+- If a tool errored or returned an empty payload, the insight states that plainly and
+  what it blocks.
+- Insights do not replace scheduling logic — fill `insights` AND decide `tool_calls`
+  independently. Skip insights only for results that are pure cache confirmations with
+  no new information.
 """
 
 _react_prompt_standard_addendum = """
@@ -395,6 +417,11 @@ DATA PRIORITY HIERARCHY:
 2. runtime_context.scrape_history: Scan for qualitative trends and guidance patterns
    across sources.
 3. Conversation history.
+
+ANALYST NOTES: runtime_context.tool_insights (when present) holds the short per-tool
+interpretations written during data collection. Use them as a reviewed reading guide —
+signals worth developing, anomalies worth explaining — but always re-verify each one
+against gathered_data before asserting it; the underlying numbers win on any conflict.
 
 CITATION PROTOCOL:
 - Numerical: Inline-cite the exact fiscal year and the entry's data_source field, naming the

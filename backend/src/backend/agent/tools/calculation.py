@@ -19,8 +19,10 @@ from langchain_core.tools import InjectedToolArg, tool
 from backend.processing.schema import HistoricalFinancials, MarketData, SectorData
 from backend.services import comparables as comparables_service
 from backend.services import dcf_engine
+from backend.services import forecast as forecast_service
 from backend.services import growth as growth_service
 from backend.services import ratio as ratio_service
+from backend.services import scenarios as scenarios_service
 
 from ..cache import CacheMissError, find, upsert
 from ..cache.schema import (
@@ -287,22 +289,33 @@ def run_dcf_valuation(
                                        rate + 150bps. WACC and all downstream valuation
                                        outputs carry additional model risk — state this
                                        explicitly when reporting results.
-        assumption_revenue_growth      The single flat growth rate applied to every projected
-                                       year. It is the AVERAGE of the year-over-year revenue
-                                       growth rates across assumption_span_years of historical
-                                       periods (e.g. 4 YoY deltas averaged if span=5) — not the
-                                       most recent single fiscal year's growth. Never describe
-                                       it as "last year's growth" or conflate it with the most
-                                       recent entry from get_income_statement_growth_rates;
-                                       those are a different, single-period number.
+        assumption_revenue_growth      The FIRST projected year's revenue growth — the starting
+                                       point of projected_growth_path, a per-year fade that
+                                       converges toward the terminal rate. Derived from
+                                       recency-weighted, outlier-filtered historical growth and
+                                       capped by company size. Not a flat rate applied to every
+                                       year, and not the most recent single fiscal year's growth —
+                                       never conflate it with entries from
+                                       get_income_statement_growth_rates.
+        projected_growth_path          The per-year revenue growth rates actually applied. Report
+                                       growth as this fading path, never as one flat number.
         assumption_ebit_margin,
         assumption_da_over_revenue,
         assumption_capex_over_revenue,
-        assumption_nwc_over_revenue     Same convention: each is a flat historical average over
-                                       assumption_span_years periods, held constant across every
-                                       projected year. Not a trend, not a single-period actual.
-        assumption_span_years          Number of historical fiscal periods averaged into the
-                                       five assumption_* fields above.
+        assumption_nwc_over_revenue     Recency-weighted historical averages held constant across
+                                       every projected year. Not a trend, not a single-period
+                                       actual.
+        assumption_span_years          Number of historical fiscal periods behind the
+                                       assumption_* fields above.
+        assumption_provenance          Per-driver audit trail: method, inputs used, rationale,
+                                       confidence. Cite it when explaining where an assumption
+                                       came from.
+        assumption_quality_flags,
+        assumption_missing_inputs      Data limitations that degrade assumption confidence —
+                                       surface them when reporting results.
+
+    Assumptions come from the same base engine as run_scenario_analysis, so this
+    tool's intrinsic value equals that tool's base scenario.
     """
     t = ticker.strip().upper()
     year = int(year or date.today().year)
@@ -322,9 +335,13 @@ def run_dcf_valuation(
     md = MarketData.model_validate(mkt_entry["data"])
     sd = SectorData.model_validate(sector_entry["data"])
 
-    assumptions = dcf_engine.build_assumptions(hf, md, sd)
+    # Same base-assumption engine as run_scenario_analysis (provenance-tracked,
+    # clamped, size-capped growth fading to the terminal rate), so the point
+    # estimate here always equals the scenario tool's base case.
+    fa = forecast_service.build_forecast_assumptions(hf, md, sd)
+    assumptions = fa.to_assumptions()
     valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
-    result = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
+    result = dcf_engine.run_dcf(hf, valuation_inputs, assumptions, forecast=fa)
 
     entry = upsert(
         calculated_messages, tool="run_dcf_valuation",
@@ -333,6 +350,85 @@ def run_dcf_valuation(
         data_source="SEC EDGAR, Yahoo Finance, FRED, Damodaran (NYU Stern) — DCF model output",
     )
     log_cache_status("run_dcf_valuation", False, ticker=t, span=span, year=year)
+    return {"source": "calculated", "data": entry["data"]}
+
+
+@tool
+def run_scenario_analysis(
+    ticker: str,
+    span: int = 5,
+    year: int = 0,
+    research_messages: Annotated[list, InjectedToolArg] = None,
+    calculated_messages: Annotated[list, InjectedToolArg] = None,
+    cycle: Annotated[int, InjectedToolArg] = 0,
+) -> dict:
+    """
+    Run a bear / base / bull DCF scenario analysis for a public company ticker.
+
+    Complements run_dcf_valuation (single base-case point estimate) by producing a
+    computed valuation RANGE. The base scenario uses the same assumption engine as
+    run_dcf_valuation — its value equals that tool's intrinsic value — while bear
+    and bull apply fixed documented shifts to those drivers and re-value through
+    the same DCF engine. Every driver carries provenance: method, inputs used,
+    rationale, and confidence.
+
+    Use this whenever a downside/upside, what-if, or valuation-range question
+    arises — its scenario figures are real model outputs from gathered data and may
+    be cited as such; never extrapolate alternate-scenario numbers yourself.
+
+    Prerequisites (same as run_dcf_valuation):
+        - Financial statement values for ticker across span periods retrieved via
+          get_financials(ticker, span).
+        - Current price, beta, shares outstanding, and risk-free rate retrieved via
+          get_market_data(ticker, include_rfr=True).
+        - Equity risk premium and terminal growth rate for year retrieved via
+          get_sector_data(year).
+
+    Key output fields:
+        valuation_range                 low / base / high intrinsic value per share
+                                        across the three scenarios. Present results as
+                                        this range, anchored on base — not as three
+                                        equally likely point targets.
+        scenarios.<name>.assumptions    Per-driver value plus provenance (method,
+                                        confidence, rationale). Cite the rationale when
+                                        explaining why scenarios differ.
+        scenarios.<name>.revenue_growth_path
+                                        Per-year growth actually applied (fades toward
+                                        the terminal rate) — not a flat rate; do not
+                                        average it back into one number.
+        scenario_shifts                 The fixed driver shifts defining bear/bull.
+                                        These are model policy, not predictions.
+        quality_flags, missing_inputs   Data limitations that degrade confidence —
+                                        surface them when reporting the range.
+    """
+    t = ticker.strip().upper()
+    year = int(year or date.today().year)
+    research_messages = research_messages if research_messages is not None else []
+    calculated_messages = calculated_messages if calculated_messages is not None else []
+
+    fin_entry = find(research_messages, ("financials", t))
+    mkt_entry = find(research_messages, ("market_data", t))
+    sector_entry = find(research_messages, ("sector_data", year))
+    if fin_entry is None or len(fin_entry["data"]["periods"]) < int(span) or mkt_entry is None or sector_entry is None:
+        raise CacheMissError(
+            f"Scenario analysis for {t} requires financials(span={span}), market_data, and "
+            f"sector_data({year}) in research_messages — call get_financials, get_market_data, "
+            "and get_sector_data first."
+        )
+
+    hf = HistoricalFinancials.model_validate(fin_entry["data"])
+    md = MarketData.model_validate(mkt_entry["data"])
+    sd = SectorData.model_validate(sector_entry["data"])
+
+    result = scenarios_service.run_scenario_analysis(hf, md, sd)
+
+    entry = upsert(
+        calculated_messages, tool="run_scenario_analysis",
+        identifier=("scenarios", t), ticker=t, cycle=cycle,
+        data=result,
+        data_source="SEC EDGAR, Yahoo Finance, FRED, Damodaran (NYU Stern) — DCF scenario model output",
+    )
+    log_cache_status("run_scenario_analysis", False, ticker=t, span=span, year=year)
     return {"source": "calculated", "data": entry["data"]}
 
 

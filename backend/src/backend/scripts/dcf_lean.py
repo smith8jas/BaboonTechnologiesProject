@@ -4,7 +4,8 @@ import sys
 from datetime import date
 
 from backend.services.financials import get_financials, get_market_data, get_sector_data
-from backend.services.dcf_engine import build_assumptions, build_valuation_inputs, run_dcf
+from backend.services.dcf_engine import build_valuation_inputs, run_dcf
+from backend.services.forecast import build_forecast_assumptions
 
 
 def main():
@@ -16,9 +17,10 @@ def main():
     hf     = get_financials(TICKER, 5)
     md     = get_market_data(TICKER)
     sd     = get_sector_data(date.today().year)
-    a      = build_assumptions(hf)
-    vi     = build_valuation_inputs(hf, md, sd)
-    result = run_dcf(hf, vi, a)
+    fa     = build_forecast_assumptions(hf, md, sd)
+    a      = fa.to_assumptions()
+    vi     = build_valuation_inputs(hf, md, sd, a)
+    result = run_dcf(hf, vi, a, forecast=fa)
 
     print(f"{TICKER}  intrinsic value/share: ${result.intrinsic_value_per_share:,.2f}")
 

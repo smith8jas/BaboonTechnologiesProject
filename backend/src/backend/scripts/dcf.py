@@ -4,7 +4,8 @@ import sys
 from datetime import date
 
 from backend.services.financials import get_financials, get_market_data, get_sector_data
-from backend.services.dcf_engine import build_assumptions, build_valuation_inputs, run_dcf
+from backend.services.dcf_engine import build_valuation_inputs, run_dcf
+from backend.services.forecast import build_forecast_assumptions
 
 
 def main():
@@ -22,14 +23,18 @@ def main():
     print(f"  {len(hf.periods)} periods: {hf.periods[0].fiscal_year} → {hf.periods[-1].fiscal_year}")
 
     # ── 2. Assumptions ────────────────────────────────────────────────────
-    section("2. Assumptions (trailing averages)")
-    a = build_assumptions(hf)
-    print(f"  {'Revenue growth:':<26} {fmt_pct(a.revenue_growth)}")
+    section("2. Assumptions (forecast engine)")
+    fa = build_forecast_assumptions(hf, md, sd)
+    a = fa.to_assumptions()
+    print(f"  {'Revenue growth (Y1):':<26} {fmt_pct(a.revenue_growth)}")
     print(f"  {'EBIT margin:':<26} {fmt_pct(a.ebit_margin)}")
     print(f"  {'Tax rate:':<26} {fmt_pct(a.tax_rate)}")
     print(f"  {'D&A / revenue:':<26} {fmt_pct(a.depreciation_and_amortization_over_revenue)}")
     print(f"  {'CapEx / revenue:':<26} {fmt_pct(a.capex_over_revenue)}")
     print(f"  {'NWC / revenue:':<26} {fmt_pct(a.nwc_over_revenue)}")
+    print(f"  {'Growth fade path:':<26} {' '.join(f'{g:.1%}' for g in fa.revenue_growth_path)}")
+    if fa.quality_flags:
+        print(f"  {'Quality flags:':<26} {', '.join(fa.quality_flags)}")
 
     # ── 3. Valuation inputs ───────────────────────────────────────────────
     section("3. Valuation Inputs")
@@ -45,7 +50,7 @@ def main():
     print(f"  {'Shares outstanding:':<26} {vi.shares_outstanding/1e9:,.2f}B")
 
     # ── Run ───────────────────────────────────────────────────────────────
-    r = run_dcf(hf, vi, a)
+    r = run_dcf(hf, vi, a, forecast=fa)
 
     # ── 4. Projections ────────────────────────────────────────────────────
     section("4. Projections ($B)")

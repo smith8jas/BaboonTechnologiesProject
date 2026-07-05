@@ -56,15 +56,19 @@ def get_company_dcf(
 ) -> DCFResponse:
     """Assemble all inputs needed to run and return a DCF valuation."""
     from backend.services import dcf_engine, financials
+    from backend.services.forecast import build_forecast_assumptions
 
     symbol = _ticker(ticker)
     resolved_year = year or date.today().year
     hf = financials.get_financials(symbol, span)
     md = financials.get_market_data(symbol)
     sd = financials.get_sector_data(resolved_year)
-    assumptions = dcf_engine.build_assumptions(hf, md, sd)
+    # Forecast engine: same assumption producer as the agent's DCF and scenario
+    # tools, so this endpoint's valuation matches the agent's base case.
+    fa = build_forecast_assumptions(hf, md, sd)
+    assumptions = fa.to_assumptions()
     valuation_inputs = dcf_engine.build_valuation_inputs(hf, md, sd, assumptions)
-    valuation = dcf_engine.run_dcf(hf, valuation_inputs, assumptions)
+    valuation = dcf_engine.run_dcf(hf, valuation_inputs, assumptions, forecast=fa)
 
     return DCFResponse(
         ticker=symbol,

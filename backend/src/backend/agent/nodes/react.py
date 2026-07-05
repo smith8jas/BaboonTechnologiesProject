@@ -11,15 +11,41 @@ from ..llm import invoke_llm_structured
 from ..messages import log_tool_calls
 from ..prompts import deep_react_prompt, judge_react_addendum, react_prompt
 from ..state import AgentState
+from ..tools import TOOLS_BY_NAME
 from .plan import ToolCallSpec
 
 
 logger = logging.getLogger(__name__)
 
 
+class ToolInsight(BaseModel):
+    # Plain str (not the ToolName enum) so a slightly-off name degrades to an
+    # unlabeled insight instead of failing the whole structured decision.
+    tool_name: str
+    insight: str
+
+
 class ReactDecision(BaseModel):
     rationale: str
+    insights: list[ToolInsight] = []
     tool_calls: list[ToolCallSpec] = []
+
+
+def _insight_entries(insights: list[ToolInsight], cycle: int) -> list[dict]:
+    """Attach each insight's tool group (for frontend labels) and react cycle."""
+    entries = []
+    for item in insights:
+        if not item.insight.strip():
+            continue
+        tool = TOOLS_BY_NAME.get(item.tool_name)
+        group = ((getattr(tool, "metadata", None) or {}).get("agent", {}) or {}).get("group")
+        entries.append({
+            "tool_name": item.tool_name,
+            "group": group,
+            "insight": item.insight.strip(),
+            "cycle": cycle,
+        })
+    return entries
 
 
 async def react_node(state: AgentState):
@@ -71,6 +97,10 @@ async def react_node(state: AgentState):
     react_message = AIMessage(content=decision.rationale, tool_calls=lc_tool_calls)
     log_tool_calls("React Decision", react_message)
 
+    #Short interpretations of this batch's tool results — accumulated in state
+    #for the response node and streamed to the frontend as reasoning events
+    insights = _insight_entries(decision.insights, next_count)
+
     #Decides plan_status depending on decision which is used by contitional edge after react_node
     #to choose which tool nodes to route to
     if lc_tool_calls:
@@ -81,17 +111,24 @@ async def react_node(state: AgentState):
                 "messages": [react_message],
                 "plan_status": "needs_scrape_and_tools",
                 "react_iterations": next_count,
+                "tool_insights": insights,
             }
         if has_scrape:
             return {
                 "messages": [react_message],
                 "plan_status": "needs_scrape",
                 "react_iterations": next_count,
+                "tool_insights": insights,
             }
         return {
             "messages": [react_message],
             "plan_status": "needs_tools",
             "react_iterations": next_count,
+            "tool_insights": insights,
         }
 
-    return {"plan_status": "ready_to_respond", "react_iterations": next_count}
+    return {
+        "plan_status": "ready_to_respond",
+        "react_iterations": next_count,
+        "tool_insights": insights,
+    }

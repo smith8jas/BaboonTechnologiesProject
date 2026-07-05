@@ -4,7 +4,8 @@ import sys
 from datetime import date
 
 from backend.services.financials import get_financials, get_market_data, get_sector_data
-from backend.services.dcf_engine import build_assumptions, build_valuation_inputs
+from backend.services.dcf_engine import build_valuation_inputs
+from backend.services.forecast import build_forecast_assumptions
 
 
 def main():
@@ -16,8 +17,9 @@ def main():
     hf  = get_financials(TICKER, 5)
     md  = get_market_data(TICKER)
     sd  = get_sector_data(date.today().year)
-    a   = build_assumptions(hf)
-    vi  = build_valuation_inputs(hf, md, sd)
+    fa  = build_forecast_assumptions(hf, md, sd)
+    a   = fa.to_assumptions()
+    vi  = build_valuation_inputs(hf, md, sd, a)
 
     # ─────────────────────────────────────────────────────────────
     section(f"{TICKER} — Company")
@@ -40,7 +42,7 @@ def main():
     print(f"  {'Market Cap:':<22} {md.market_cap/1e9:>8,.2f}B")
 
     # ─────────────────────────────────────────────────────────────
-    section("Assumptions (trailing averages)")
+    section("Assumptions (forecast engine)")
     print(f"  {'Revenue growth:':<22} {fmt_pct(a.revenue_growth)}")
     print(f"  {'EBIT margin:':<22} {fmt_pct(a.ebit_margin)}")
     print(f"  {'Tax rate:':<22} {fmt_pct(a.tax_rate)}")

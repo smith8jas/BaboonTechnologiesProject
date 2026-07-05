@@ -73,6 +73,16 @@ def _comparables_fact(data: dict[str, Any]) -> dict[str, Any]:
     return {"detail": detail}
 
 
+def _scenarios_fact(data: dict[str, Any]) -> dict[str, Any]:
+    band = data.get("valuation_range") or {}
+    low, base, high = band.get("low"), band.get("base"), band.get("high")
+    detail = (
+        f"bear/base/bull intrinsic value ${low:.2f}–${high:.2f}/share (base ${base:.2f})"
+        if None not in (low, base, high) else ""
+    )
+    return {"detail": detail}
+
+
 _CATALOG_FACT_BUILDERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "financials": _financials_fact,
     "market_data": _market_data_fact,
@@ -80,6 +90,7 @@ _CATALOG_FACT_BUILDERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = 
     "growth": _period_keyed_fact,
     "dcf": _dcf_fact,
     "comparables": _comparables_fact,
+    "scenarios": _scenarios_fact,
 }
 
 

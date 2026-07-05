@@ -2,7 +2,7 @@
 
     router.py    routes between direct answer and the planning path
     plan.py      generates the initial tool-call batch
-    tools.py     executes non-scrape tool calls against the data cache
+    tools.py     phase runner + exec_research/exec_calc execution nodes
     scrape.py    expands scrape topics into queries and gathers web results
     react.py     evaluates tool results and loops or finishes
     response.py  composes the final user-facing answer
@@ -15,11 +15,13 @@ from .react import react_node
 from .response import response_node
 from .router import RouterDecision, router
 from .scrape import ScrapeDecision, scrape_node
-from .tools import tools_node
+from .tools import exec_calc_node, exec_research_node, tools_node
 
 __all__ = [
     "RouterDecision",
     "ScrapeDecision",
+    "exec_calc_node",
+    "exec_research_node",
     "judge_node",
     "plan_node",
     "react_node",
