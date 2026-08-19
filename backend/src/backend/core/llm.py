@@ -1,10 +1,11 @@
 import os
 import re
 
-from dotenv import find_dotenv, load_dotenv
 from langchain.chat_models import init_chat_model
 
-load_dotenv(find_dotenv())
+from backend.core.env import load_env
+
+load_env()
 
 LLM_MAX_TOKENS = os.getenv("LLM_MAX_TOKENS")
 
@@ -26,6 +27,10 @@ _NODE_DEFAULTS: dict[str, tuple[str, str]] = {
 
     # External research needs critical query design, but should stay cost-controlled.
     "scrape":   ("openai",    "gpt-5.4-mini"),
+
+    # Per-tool-result interpretation: many small parallel calls per cycle, one result
+    # each, so a cheap model is enough and cost stays bounded.
+    "insight":  ("openai",    "gpt-5.4-mini"),
 }
 
 

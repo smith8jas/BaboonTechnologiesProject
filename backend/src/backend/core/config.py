@@ -2,6 +2,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.core.env import GLOBAL_ENV_FILE
+
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 
 class Settings(BaseSettings):
@@ -31,7 +33,8 @@ class Settings(BaseSettings):
         ]
 
     model_config = SettingsConfigDict(
-        env_file=BACKEND_ROOT / ".env",
+        # Later entries win: a repo-local .env overrides the global one.
+        env_file=(GLOBAL_ENV_FILE, BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore"
     )

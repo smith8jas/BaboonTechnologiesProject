@@ -31,6 +31,8 @@ async def scrape_node(state: AgentState):
     logger.info("Scrape Node Activated")
     tool_calls = latest_tool_calls(state)
     scrape_calls = [tc for tc in tool_calls if tc.get("name") == SCRAPE_TOOL_NAME]
+    #Tags entries with the user query index so downstream context can be scoped per turn
+    current_query = state.get("query_count", 0)
 
     async def _process_one(call: dict) -> tuple[ToolMessage, list[dict]]:
         args = call.get("args") or {}
@@ -83,6 +85,7 @@ async def scrape_node(state: AgentState):
                     continue
                 entry = {
                     "query": query,
+                    "query_index": current_query,
                     "url": r.url,
                     "title": r.title,
                     "snippet": r.snippet,

@@ -11,6 +11,7 @@ from .edges import route_after_judge, route_after_plan, route_after_react, route
 from .nodes import (
     exec_calc_node,
     exec_research_node,
+    insight_node,
     judge_node,
     plan_node,
     react_node,
@@ -28,6 +29,8 @@ def initialize_agent():
     in parallel (both exactly one hop), converging on exec_calc — so
     assumptions/calculation tools see this same cycle's scrape and research
     writes before react runs, and exec_calc fires exactly once per cycle.
+    insight_node then interprets each of the batch's tool results in parallel
+    before react schedules the next cycle.
     """
 
     #Setting the state class in the agent
@@ -39,6 +42,7 @@ def initialize_agent():
     agent_builder.add_node("exec_research", exec_research_node)
     agent_builder.add_node("exec_calc", exec_calc_node)
     agent_builder.add_node("scrape_node", scrape_node)
+    agent_builder.add_node("insight_node", insight_node)
     agent_builder.add_node("react_node", react_node)
     agent_builder.add_node("response_node", response_node)
     agent_builder.add_node("judge_node", judge_node)
@@ -52,7 +56,9 @@ def initialize_agent():
     #Both one-hop branches converge on exec_calc, which always runs once per cycle
     agent_builder.add_edge("exec_research", "exec_calc")
     agent_builder.add_edge("scrape_node", "exec_calc")
-    agent_builder.add_edge("exec_calc", "react_node")
+    #Every batch is interpreted per-result (parallel LLM calls) before react schedules
+    agent_builder.add_edge("exec_calc", "insight_node")
+    agent_builder.add_edge("insight_node", "react_node")
     agent_builder.add_conditional_edges(
         "react_node",
         route_after_react,

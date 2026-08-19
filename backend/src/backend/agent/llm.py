@@ -37,6 +37,7 @@ _NODE_MESSAGES: dict[str, str] = {
     "response": "dialogue",
     "judge":    "last_human",
     "scrape":   "none",
+    "insight":  "none",
 }
 
 
@@ -61,10 +62,12 @@ def _resolve_messages(state, node: str) -> list:
 _NODE_CONTEXT: dict[str, set[str]] = {
     "router":   {"available_tools", "previous_depth"},
     "plan":     {"available_tools", "cached_data_catalog"},
-    "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale"},
-    "response": {"scrape_history", "forced_response_due_to_recursion", "tool_insights"},
+    "react":    {"available_tools", "cached_data_catalog", "scrape_history", "judge_rationale", "plan_rationale"},
+    "response": {"scrape_history_current_query", "forced_response_due_to_recursion", "tool_insights"},
     "judge":    {"cached_data_catalog"},
     "scrape":   {"scrape_history"},
+    # insight receives everything per-call via extra_context (one tool result each).
+    "insight":  set(),
 }
 
 # HTTP statuses that no alternate structured-output method can fix — auth,
@@ -169,9 +172,24 @@ def build_system_prompt(
         context["forced_response_due_to_recursion"] = state.get("forced_response_due_to_recursion", False)
     if "scrape_history" in include:
         context["scrape_history"] = state.get("scrape_history", [])[-20:]
+    # Same context key, narrower slice: react/scrape need cross-turn history for
+    # dedup, but response only needs what was scraped for the current user query.
+    if "scrape_history_current_query" in include:
+        current_query = state.get("query_count", 0)
+        history = [s for s in state.get("scrape_history", []) if s.get("query_index") == current_query]
+        context["scrape_history"] = history[-20:]
     if "tool_insights" in include:
+        # tool_insights accumulates across the whole conversation (operator.add);
+        # only the entries written for the current user query are relevant context.
         if insights := state.get("tool_insights"):
-            context["tool_insights"] = insights
+            current_query = state.get("query_count", 0)
+            if current := [i for i in insights if i.get("query_index") == current_query]:
+                context["tool_insights"] = current
+    # Sourced from tool_guidance so react keeps the current plan's rationale in
+    # every cycle — the plan message itself leaves react's view after cycle 1.
+    if "plan_rationale" in include:
+        if guidance := state.get("tool_guidance"):
+            context["plan_rationale"] = guidance
     # Sourced from deep_plan so the router reads the prior turn's depth decision
     # without needing a separate previous_depth state field.
     if "previous_depth" in include:

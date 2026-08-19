@@ -1,5 +1,5 @@
-from dotenv import load_dotenv
-load_dotenv()
+from backend.core.env import load_env
+load_env()
 
 import os
 from langsmith import Client

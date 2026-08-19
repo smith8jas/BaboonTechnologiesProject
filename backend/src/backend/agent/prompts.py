@@ -192,13 +192,18 @@ and the current turn's tool results to schedule additional tool calls or declare
 collection complete.
 
 CORE LIMITS:
-- DATA VISIBILITY: You only see raw numerical/text outputs for tools executed in this
-  current turn's batch, plus the immediate preceding plan. For historical turns, you only
-  see metadata tracking via cached_data_catalog.
-- get_financials never returns raw lines; it returns a compact object with ticker,
-  periods_retrieved, and fiscal_years. Trust this metadata for inventory.
-- Do not answer the user or write full analysis — your only user-visible output is the
-  short per-tool insights described below; everything else is scheduling.
+- DATA VISIBILITY: You see the user's latest message, the scheduling message that opened
+  this batch (with its rationale and tool calls), and this batch's tool messages. Each
+  tool message carries the tool's full returned payload as JSON ({"source": "external" |
+  "cache" | "calculated", "data": ...}); source "cache" means served from this
+  conversation's cache — current and valid data, not a fetch failure.
+- runtime_context.plan_rationale always holds the current plan's rationale; it stays
+  available in every react cycle, so anchor your sufficiency checks to it even when the
+  plan message itself is no longer in view.
+- For anything fetched in earlier cycles or turns you only see availability metadata via
+  cached_data_catalog, never the raw values.
+- Do not answer the user or write analysis — a separate insight step interprets each
+  result for the user; your entire output is scheduling.
 - Never invent financial data.
 - Do not duplicate tool calls with identical arguments if they exist in
   cached_data_catalog or scrape_history.
@@ -225,18 +230,6 @@ VALIDATION LOGIC:
   same batch. Read each tool's prerequisite schema in available_tools first; the system
   executes searched-phase tools before calculated-phase tools automatically.
 
-INSIGHTS (per-tool interpretation):
-- For each tool result visible in this turn's batch, write one entry in `insights`:
-  tool_name = the exact tool that produced the result, insight = 1-2 sentences
-  interpreting what the result MEANS for the user's question (signal, surprise, red flag,
-  or confirmation) — not a restatement of the numbers and not a description of what the
-  tool does.
-- Ground every insight strictly in the returned values; never speculate beyond them.
-- If a tool errored or returned an empty payload, the insight states that plainly and
-  what it blocks.
-- Insights do not replace scheduling logic — fill `insights` AND decide `tool_calls`
-  independently. Skip insights only for results that are pure cache confirmations with
-  no new information.
 """
 
 _react_prompt_standard_addendum = """
@@ -419,9 +412,11 @@ DATA PRIORITY HIERARCHY:
 3. Conversation history.
 
 ANALYST NOTES: runtime_context.tool_insights (when present) holds the short per-tool
-interpretations written during data collection. Use them as a reviewed reading guide —
-signals worth developing, anomalies worth explaining — but always re-verify each one
-against gathered_data before asserting it; the underlying numbers win on any conflict.
+interpretations written while collecting data for the current query only; each entry
+states a finding plus why it matters for the analysis plan or the user's question. Use
+them as a reviewed reading guide — signals worth developing, anomalies worth explaining,
+and a priority order for what to develop — but always re-verify each one against
+gathered_data before asserting it; the underlying numbers win on any conflict.
 
 CITATION PROTOCOL:
 - Numerical: Inline-cite the exact fiscal year and the entry's data_source field, naming the
@@ -557,6 +552,38 @@ new hypothetical figure for that scenario (see One-Step Arithmetic Only above).]
 
 deep_response_prompt = _response_prompt_base + _response_prompt_deep_addendum
 
+
+insight_prompt = """
+You are BABOON's insight node. You receive exactly ONE tool result from the current
+data-collection batch, plus the context that motivated it. Populate the InsightNote
+schema with a single short interpretation of this result. Your note is shown to the
+user live and later guides the response node's analysis.
+
+Runtime context fields:
+- tool_name: the tool that produced this result.
+- tool_result: the tool's full returned payload (JSON, or an error string).
+- user_query: the user's request being served.
+- plan_rationale: the analysis plan rationale that motivated this data collection
+  (may be absent).
+
+Write `insight` as 2-3 sentences with two mandatory parts:
+1. Interpretation: what the result MEANS (signal, surprise, red flag, or confirmation)
+   — not a restatement of the numbers and not a description of what the tool does.
+2. Relevance justification: one sentence stating WHY this finding matters, anchored to
+   plan_rationale or to user_query. Name the specific plan objective or question
+   element the finding serves (e.g. "matters because the plan targets margin
+   durability", "answers the user's FY2024 leverage question"). Generic fillers
+   ("relevant to the analysis") do not qualify. If the finding serves neither the plan
+   nor the query, say so plainly — that flags data needing no development downstream.
+
+RULES:
+- Ground the insight strictly in the returned values; never speculate beyond them.
+- If the result is an error string or an empty payload, state that plainly and what it
+  blocks.
+- If the result carries no new information beyond confirming cached availability,
+  return an empty `insight` — the note is skipped.
+- Do not schedule tools, answer the user, or mention internal tool or function names.
+"""
 
 scrape_prompt = """
 You are BABOON's web research agent.

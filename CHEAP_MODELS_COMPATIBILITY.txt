@@ -1,0 +1,151 @@
+CHEAPEST MODELS PER PROVIDER — COMPATIBILITY TESTING
+=====================================================
+Source: backend/.env and backend/.env.example provider list.
+Anthropic pricing is from the official reference (2026-06); other providers'
+prices are as of early 2026 — spot-check before relying on them for budgeting.
+
+Picked for: cheap, but still supporting tool calling / structured output
+where possible, so they exercise the capability ladder in core/llm.py.
+
+
+PROVIDERS WITH WORKING KEYS (confirmed-compatible section of .env)
+------------------------------------------------------------------
+
+Provider   | Cheapest model            | $/1M in / out | Notes
+-----------|---------------------------|---------------|---------------------------------------------
+openai     | gpt-4.1-nano              | 0.10 / 0.40   | Full native tool calling + JSON schema.
+           |                           |               | gpt-4o-mini (0.15/0.60) is the safer,
+           |                           |               | better-documented fallback.
+anthropic  | claude-haiku-4-5          | 1.00 / 5.00   | Cheapest current Claude; supports tool use
+           |                           |               | and structured outputs. .env.example already
+           |                           |               | references claude-haiku-4-5-20251001.
+groq       | llama-3.1-8b-instant      | 0.05 / 0.08   | Cheapest hosted option overall. 8B model, so
+           |                           |               | expect it to hit the prompt-JSON fallback
+           |                           |               | rung more often than llama-3.3-70b-versatile.
+
+
+PROVIDERS WITH COMMENTED-OUT KEYS
+---------------------------------
+
+Provider      | Cheapest model                                    | $/1M in / out  | Notes
+--------------|---------------------------------------------------|----------------|--------------------------------------
+cohere        | command-r-08-2024                                 | 0.15 / 0.60    | Stays on the v1 API that .env.example
+              |                                                   |                | requires (avoid command-a-03-2025 —
+              |                                                   |                | billed_units streaming crash).
+              |                                                   |                | command-r7b-12-2024 is cheaper
+              |                                                   |                | (~0.04/0.15) but weaker at tools.
+google_genai  | gemini-2.0-flash-lite                             | 0.075 / 0.30   | Supports function calling;
+              |                                                   |                | gemini-2.0-flash (0.10/0.40) if lite
+              |                                                   |                | misbehaves.
+mistralai     | ministral-3b-latest                               | 0.04 / 0.04    | Supports function calling.
+              |                                                   |                | mistral-small-latest (0.10/0.30) is
+              |                                                   |                | the more robust cheap option.
+fireworks     | accounts/fireworks/models/llama-v3p1-8b-instruct  | ~0.20 flat     | Much cheaper than the 70B in the
+              |                                                   |                | example.
+together      | meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo       | ~0.18 flat     | Same 8B caveat re: prompt-JSON
+              |                                                   |                | fallback.
+xai           | grok-3-mini                                       | 0.30 / 0.50    | Native tool calling; far cheaper than
+              |                                                   |                | grok-3 (3/15).
+huggingface   | mistralai/Mistral-7B-Instruct-v0.3                | free tier      | Already goes through the prompt-JSON
+              |                                                   |                | ladder anyway.
+bedrock       | anthropic.claude-haiku-4-5                        | 1.00 / 5.00    | Same Haiku pricing; anthropic.-prefixed
+              |                                                   |                | model ID on Bedrock.
+ollama        | llama3.2:1b or qwen2.5:1.5b                       | free (local)   | For pure protocol testing, the smallest
+              |                                                   |                | local model is enough.
+
+
+PRACTICAL NOTES
+---------------
+
+1. For COMPATIBILITY testing specifically (does the provider ladder in
+   core/llm.py degrade correctly?), the very small models are actually
+   useful — they exercise the json_mode / prompt-JSON fallback rungs that
+   the big models never hit. For QUALITY comparisons, step up one tier
+   (e.g. gpt-4o-mini, mistral-small-latest).
+
+2. The current .env points all six nodes (router, plan, react, response,
+   judge, scrape) at cohere / command-r-plus-08-2024, which at 2.50/10.00
+   per 1M is one of the MORE expensive options in the file. For cheap
+   iteration, Groq llama-3.1-8b-instant or gpt-4.1-nano cuts that cost
+   by roughly 20-50x.
+
+
+SECURITY — API KEY HYGIENE (expanded)
+-------------------------------------
+
+UPDATE 2026-07-05: Option A implemented. The live .env now lives at
+C:\Users\santi\.baboon\.env (outside OneDrive sync). The backend loads it
+via backend/core/env.py (load_env) and config.py reads it as a pydantic
+env_file; a repo-local backend/.env still works and overrides the global
+file if both exist. NOTE: the old file was synced to OneDrive before the
+move (and OneDrive keeps deleted-file history), so the rotation checklist
+below still applies — rotate keys AFTER the move so new keys never touch
+the synced folder.
+
+Current state (verified 2026-07-05):
+
+  * backend/.env and frontend/.env are BOTH gitignored (root .gitignore has
+    a `.env` entry, and `git check-ignore` confirms both files match it).
+    Only backend/.env.example and frontend/.env.example are tracked by git,
+    and they contain placeholders only. So the live keys are NOT in the
+    repository or its history. Good.
+
+  * However, backend/.env currently holds LIVE credentials for:
+      - OPENAI_API_KEY            (sk-proj-...)
+      - ANTHROPIC_API_KEY         (sk-ant-api03-...)
+      - GROQ_API_KEY              (gsk_...)
+      - FRED_API_KEY
+      - SUPABASE_SERVICE_ROLE_KEY (sb_secret_... — full-admin DB key)
+      - SUPABASE_ANON_KEY         (publishable — low risk by design)
+      - LANGSMITH_API_KEY         (lsv2_pt_...)
+    Plus commented-out but still-real-looking keys for Cohere, Google,
+    Mistral, Fireworks, Together, xAI, and HuggingFace. Commenting a key
+    out does NOT deactivate it — a leaked commented key is just as usable
+    as an active one.
+
+Why this matters even though the file is gitignored:
+
+  * The project lives inside OneDrive. The .env file is being synced to
+    Microsoft's cloud and to any other device linked to the account. That
+    widens the exposure surface beyond this machine (account compromise,
+    shared folder misconfiguration, a second synced device).
+
+  * Keys from this file have been pasted into external tools/conversations
+    (including this AI session) while debugging. Treat any key that has
+    left the machine as potentially exposed and rotate it.
+
+  * The SUPABASE_SERVICE_ROLE_KEY is the highest-impact secret in the
+    file: it bypasses row-level security entirely. If it leaks, the whole
+    database is readable and writable. It should never ship to the
+    frontend, never appear in client bundles, and ideally live only in
+    the deployment platform's secret store (e.g. Render environment
+    variables), not on dev machines that don't need it.
+
+Recommended actions, in priority order:
+
+  1. Rotate the Supabase service-role key (Supabase dashboard -> Settings
+     -> API -> regenerate), then update Render/production env vars.
+  2. Rotate the OpenAI, Anthropic, and Groq keys (each provider's console
+     has a revoke + create-new flow). These are the ones with active
+     billing attached.
+  3. Rotate or delete the commented-out keys (Cohere, Google, Mistral,
+     Fireworks, Together, xAI, HuggingFace) — delete the lines outright
+     if the providers aren't being used; recreate keys when needed.
+  4. Rotate the LangSmith key (traces can contain prompt/response data).
+  5. Set per-provider spend limits / budget alerts in each console so a
+     leaked key has a bounded blast radius.
+  6. Longer term: keep dev keys and prod keys separate (never reuse the
+     same key in both), and consider moving the project out of a
+     cloud-synced folder or using a secrets manager (even `direnv` +
+     an untracked file outside OneDrive is an improvement).
+
+General rules going forward:
+
+  * .env.example gets placeholders ONLY — never paste a real key into it
+    "temporarily"; it is tracked by git and one commit makes the leak
+    permanent in history.
+  * If a real key ever does get committed, rotating the key is mandatory;
+    rewriting git history (filter-repo) is cleanup, not remediation —
+    assume anything pushed was scraped within minutes.
+  * When sharing .env contents for debugging, redact the key values first
+    (keep the variable names, replace values with "***").

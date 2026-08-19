@@ -82,8 +82,8 @@ def events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
         if tool_names:
             events.extend(_status_events_from_tool_names(tool_names))
 
-    elif node_name == "react_node":
-        # Per-tool interpretations written by react — live reasoning for the frontend.
+    elif node_name == "insight_node":
+        # Per-tool interpretations written by insight_node — live reasoning for the frontend.
         for entry in state_update.get("tool_insights", []) or []:
             events.append({
                 "type": "insight",
@@ -91,6 +91,8 @@ def events_from_node_update(node_name: str, state_update: dict) -> list[dict]:
                 "group": entry.get("group"),
                 "tool_name": entry.get("tool_name"),
             })
+
+    elif node_name == "react_node":
         plan_status = state_update.get("plan_status", "")
         if plan_status == "needs_tools":
             for msg in messages:
