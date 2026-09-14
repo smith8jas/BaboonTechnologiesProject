@@ -7,5 +7,8 @@ node_modules/
 dist/
 build/
 
+# Large local demo source (GitHub limit: 100 MB)
+Demo1.mp4
+
 # Local planning documents (never commit)
 DEPLOYMENT_READINESS_PLAN.md

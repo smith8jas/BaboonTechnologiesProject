@@ -4,6 +4,10 @@ An equity research agent for US public companies. Ask about a company and it pul
 
 **Status:** working prototype. Deployable to Render and Vercel (see [DEPLOYMENT.md](DEPLOYMENT.md)), but not hardened for production and not intended to inform investment decisions.
 
+## Demo
+
+[Watch the Baboon Analyst demo](Demo1-viewer-cut-v2-1080p.mp4) to see the application produce sourced comparative analysis and DCF valuation outputs for public companies.
+
 The agent is model-agnostic. See [LLM_COMPATIBILITY.md](LLM_COMPATIBILITY.md) for supported providers, model requirements, and configuration examples.
 
 > **Disclaimer:** LLMs are stochastic, which creates a risk of hallucinations. Even though calculations are performed deterministically through tools, the LLM can still ignore or misinterpret their results.
