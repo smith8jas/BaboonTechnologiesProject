@@ -6,3 +6,6 @@ __pycache__/
 node_modules/
 dist/
 build/
+
+# Local planning documents (never commit)
+DEPLOYMENT_READINESS_PLAN.md
